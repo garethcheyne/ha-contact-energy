@@ -70,11 +70,26 @@ class ContactEnergyUsageSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict:
         """Return additional state attributes."""
-        return {
+        attributes = {
             "account_id": self._api._accountId,
             "contract_id": self._api._contractId,
             "last_daily_cost": f"${self._last_cost:.2f}",
         }
+        
+        # Add plan details if available
+        if self._api._plan_details:
+            plan = self._api._plan_details
+            attributes.update({
+                "plan_name": plan.get("plan_name", "Unknown"),
+                "plan_id": plan.get("plan_id", ""),
+                "campaign": plan.get("campaign", ""),
+                "contract_start_date": plan.get("contract_start", ""),
+                "contract_end_date": plan.get("contract_end", ""),
+                "prompt_payment_discount": plan.get("ppd_percentage", "0%"),
+                "service_type": plan.get("service_type", "Electricity"),
+            })
+        
+        return attributes
 
     async def async_update(self) -> None:
         """Update the sensor."""
