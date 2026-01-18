@@ -12,7 +12,14 @@
       "WebFetch(domain:github.com)",
       "Bash(npm install:*)",
       "Bash(node convert-icon.js:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" status)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" remote -v)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" add -A)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" log --oneline -5)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" ls-files custom_components/)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" restore --staged .claude/settings.local.json)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" commit -m \"$(cat <<''EOF''\nFix HACS download - remove zip_release requirement\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\" hacs.json)"
     ]
   }
 }
