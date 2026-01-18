@@ -3,8 +3,5 @@
 	"country": [
 		"NZ"
 	],
-	"filename": "contact_energy.zip",
-	"hide_default_branch": true,
-	"render_readme": true,
-	"zip_release": true
+	"render_readme": true
 }
