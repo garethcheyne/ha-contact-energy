@@ -26,7 +26,7 @@
 
 This Home Assistant custom integration connects to Contact Energy's API to provide real-time monitoring of your electricity usage and costs. Perfect for New Zealand homes wanting to track their energy consumption through Home Assistant's powerful Energy Dashboard.
 
-**Version:** v2026.01.18.02
+**Version:** v2026.01.19.01
 
 > **Attribution:** This is a fork of the original [ha-contact-energy](https://github.com/codyc1515/ha-contact-energy) integration by [@codyc1515](https://github.com/codyc1515). Credit to them for the original implementation.
 
@@ -435,6 +435,46 @@ Your support and contributions are welcome! Here's how you can help:
 ---
 
 ## 📝 Changelog
+
+### v2026.01.19.01
+
+**Major Feature Update - Automatic Rate Detection & Enhanced Sensors**
+
+#### 🆕 New Features
+- 🤖 **Automatic Rate Detection** - Fetches peak/off-peak rates directly from your bill API
+  - Intelligent time range parsing (e.g., "9PM - 7AM" detected as off-peak)
+  - Works with any plan's time periods (not hardcoded)
+  - Converts cents to dollars automatically (32.700 cents → $0.327/kWh)
+- 🎛️ **User Rate Override** - Optional manual rate configuration
+  - Priority: User Override > API Rates > Defaults
+  - Leave fields empty for automatic detection
+- 📅 **Next Bill Date Sensor** - Shows when your next bill is due
+- 💵 **Next Bill Amount Sensor** - Displays estimated next bill amount
+- 🏷️ **Enhanced Device Info** - Device now shows:
+  - Model: Your plan name (e.g., "Good Charge")
+  - Software Version: Plan ID (e.g., "RGCHO00")
+  - Configuration URL: Link to Contact Energy My Account
+
+#### 🔧 Improvements
+- ✅ **Fixed Historical Data** - Statistics now properly spread across actual dates/hours
+  - Each hour appears on its correct timestamp (not lumped on one date)
+  - Includes both `state` (hourly value) and `sum` (cumulative)
+- ✅ **Business Partner Extraction** - Now correctly extracted from login response
+- ✅ **7 Total Sensors** - Complete energy monitoring suite:
+  1. Energy Usage (with hourly statistics)
+  2. Current Price (for Energy Dashboard)
+  3. Peak Cost
+  4. Off-Peak Cost
+  5. Off-Peak Period
+  6. Next Bill Date (NEW)
+  7. Next Bill Amount (NEW)
+
+#### 📚 Documentation
+- Complete sensor documentation with examples and attributes
+- Rate configuration modes explained
+- Device info customization documented
+
+---
 
 ### v2026.01.18.02
 

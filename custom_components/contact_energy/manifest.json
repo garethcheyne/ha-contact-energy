@@ -12,5 +12,5 @@
 	"iot_class": "cloud_polling",
 	"issue_tracker": "https://github.com/garethcheyne/ha-contact-energy/issues",
 	"requirements": [],
-	"version": "2026.01.18.02"
+	"version": "2026.01.19.01"
 }
