@@ -316,6 +316,119 @@ Contact Energy usage data is typically **delayed by 1-2 days**. This is a limita
 - ✅ **Expected:** No data for yesterday or today
 - ✅ **Normal:** Data available from 2-3 days ago onwards
 
+### Importing Historical Data
+
+To import historical data directly into Home Assistant's database for the Energy Dashboard:
+
+**Developer Tools → Services:**
+
+**Standard Import (adds to existing data):**
+```yaml
+service: contact_energy.import_historical_data
+data:
+  days: 90  # Optional: 1-365 days (default: 90)
+```
+
+**Fresh Import (clears all data first):**
+```yaml
+service: contact_energy.import_historical_data
+data:
+  days: 90  # Optional: 1-365 days (default: 90)
+  clear_existing: true
+  confirm_clear: "yes"  # Required when clear_existing is true
+```
+
+**What it does:**
+1. Optionally clears all existing statistics (if `clear_existing: true` and confirmed)
+2. Fetches up to 365 days of hourly data from Contact Energy API
+3. Imports directly into Home Assistant's statistics database
+4. Separates peak and off-peak energy into appropriate statistics
+5. Makes data immediately available in the Energy Dashboard
+6. Shows progress logs every 10 days
+
+**Use Cases:**
+- **Backfill Energy Dashboard** - Add more historical context to existing data
+- **Year-over-year comparisons** - Import a full year for trend analysis
+- **Fresh start** - Clear everything and reimport from scratch
+- **Restore data** - After database issues or integration problems
+- **Initial setup** - Start with comprehensive historical baseline
+
+**Note:** Contact Energy data is typically delayed by 1-2 days, so the most recent days may have no data available. This is normal.
+
+### Purging and Reloading Data
+
+⚠️ **Deprecated:** Use `import_historical_data` with `clear_existing: true` instead.
+
+~~If you need to clear all statistics and reimport fresh data (e.g., after changing configuration or fixing issues), you can use the built-in service:~~
+
+~~**Developer Tools → Services:**~~
+```yaml
+# DEPRECATED - Use import_historical_data instead
+# service: contact_energy.purge_and_reload
+# data:
+#   confirm: "yes"
+```
+
+~~This will:
+1. Clear all Contact Energy statistics from the database
+2. Reload the integration
+3. Reimport all historical data based on your `usage_days` setting~~
+
+~~**⚠️ Warning:** This action is destructive and will permanently delete all historical tracking data. You must explicitly confirm by typing "yes" in the confirmation field.~~
+
+### Exporting Historical Data
+
+To export all historical data for analysis or plotting in external tools (Excel, Python, R, etc.):
+
+**Developer Tools → Services:**
+```yaml
+service: contact_energy.export_historical_data
+data:
+  days: 30  # Optional: number of days to export (default: 30)
+```
+
+This will:
+1. Fetch up to 365 days of historical hourly data from Contact Energy
+2. Export to CSV file: `/config/contact_energy_export.csv`
+3. Log summary statistics (total kWh, peak/off-peak breakdown, total cost)
+
+**CSV Format:**
+```csv
+timestamp,date,hour,kwh,cost_nzd,is_offpeak,offpeak_kwh,peak_kwh
+2026-01-15 00:00:00,2026-01-15,0,1.15,0.185,1,1.15,0.00
+2026-01-15 01:00:00,2026-01-15,1,0.98,0.158,1,0.98,0.00
+2026-01-15 07:00:00,2026-01-15,7,2.34,0.765,0,0.00,2.34
+```
+
+**Use Cases:**
+- Create custom visualizations in Excel, Tableau, or Power BI
+- Analyze usage patterns with Python (pandas, matplotlib)
+- Calculate custom statistics or forecasts
+- Backup historical data before making changes
+- Share data with energy consultants
+
+**Example Python Plot:**
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load exported data
+df = pd.read_csv('/config/contact_energy_export.csv')
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+# Plot daily consumption
+daily = df.groupby('date')['kwh'].sum()
+daily.plot(kind='bar', title='Daily Energy Consumption', ylabel='kWh')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# Plot hourly pattern (average by hour of day)
+hourly_avg = df.groupby('hour')['kwh'].mean()
+hourly_avg.plot(kind='line', title='Average Hourly Consumption', ylabel='kWh', xlabel='Hour')
+plt.show()
+```
+
 ---
 
 ## 🔧 API Documentation

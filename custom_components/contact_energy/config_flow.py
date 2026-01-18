@@ -7,7 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -64,6 +64,11 @@ class ContactEnergyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        """Get the options flow for this handler."""
+        return ContactEnergyOptionsFlow(config_entry)
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -91,6 +96,76 @@ class ContactEnergyConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
+        )
+
+
+class ContactEnergyOptionsFlow(OptionsFlow):
+    """Handle options flow for Contact Energy."""
+
+    def __init__(self, config_entry):
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        # Get current values from config entry
+        current_usage_days = self.config_entry.data.get(CONF_USAGE_DAYS, DEFAULT_USAGE_DAYS)
+        current_peak_rate = self.config_entry.data.get(CONF_PEAK_RATE)
+        current_offpeak_rate = self.config_entry.data.get(CONF_OFFPEAK_RATE)
+
+        # Create schema with current values as defaults
+        options_schema = vol.Schema({
+            vol.Optional(CONF_USAGE_DAYS, default=current_usage_days): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=30)
+            ),
+            vol.Optional(CONF_PEAK_RATE, default=current_peak_rate): vol.All(
+                vol.Coerce(float), vol.Range(min=0.01, max=5.0)
+            ),
+            vol.Optional(CONF_OFFPEAK_RATE, default=current_offpeak_rate): vol.All(
+                vol.Coerce(float), vol.Range(min=0.0, max=5.0)
+            ),
+        })
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=options_schema,
+        )
+
+    def __init__(self, config_entry):
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        # Build options schema with current values
+        current_usage_days = self.config_entry.data.get(CONF_USAGE_DAYS, DEFAULT_USAGE_DAYS)
+        current_peak_rate = self.config_entry.data.get(CONF_PEAK_RATE)
+        current_offpeak_rate = self.config_entry.data.get(CONF_OFFPEAK_RATE)
+
+        options_schema = vol.Schema({
+            vol.Optional(
+                CONF_USAGE_DAYS,
+                default=current_usage_days
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=30)),
+            vol.Optional(
+                CONF_PEAK_RATE,
+                default=current_peak_rate
+            ): vol.All(vol.Coerce(float), vol.Range(min=0.01, max=5.0)),
+            vol.Optional(
+                CONF_OFFPEAK_RATE,
+                default=current_offpeak_rate
+            ): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=5.0)),
+        })
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=options_schema
         )
 
 

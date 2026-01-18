@@ -2,17 +2,21 @@
   "config": {
     "step": {
       "user": {
-        "title": "Contact Energy Login",
-        "description": "Enter your Contact Energy account credentials.",
+        "title": "Contact Energy Setup",
+        "description": "Configure your Contact Energy integration",
         "data": {
-          "email": "Email",
+          "email": "Email Address",
           "password": "Password",
-          "usage_days": "Days of usage history to fetch"
+          "usage_days": "Historical Data (days)",
+          "peak_rate": "Peak Rate Override ($/kWh)",
+          "offpeak_rate": "Off-Peak Rate Override ($/kWh)"
         },
         "data_description": {
-          "email": "The email address you use to log in to Contact Energy",
+          "email": "Your Contact Energy account email",
           "password": "Your Contact Energy account password",
-          "usage_days": "Number of days of historical usage data to retrieve (1-30)"
+          "usage_days": "Number of days to fetch (1-30)",
+          "peak_rate": "Leave empty to auto-detect from bill",
+          "offpeak_rate": "Leave empty to auto-detect from bill"
         }
       }
     },

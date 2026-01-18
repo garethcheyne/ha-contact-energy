@@ -1,0 +1,46 @@
+import_historical_data:
+  name: Import Historical Data
+  description: Fetches historical data from Contact Energy API and imports into Home Assistant database for Energy Dashboard. Optionally clear existing data first.
+  fields:
+    days:
+      name: Days
+      description: Number of days of historical data to import (1-365)
+      required: false
+      default: 90
+      example: 90
+      selector:
+        number:
+          min: 1
+          max: 365
+          mode: box
+    clear_existing:
+      name: Clear Existing Data
+      description: Delete all existing statistics before importing (requires confirmation)
+      required: false
+      default: false
+      selector:
+        boolean:
+    confirm_clear:
+      name: Confirm Clear
+      description: Type 'yes' to confirm deletion of existing data (only required if clear_existing is true)
+      required: false
+      example: "yes"
+      selector:
+        text:
+
+export_historical_data:
+  name: Export Historical Data
+  description: Exports historical energy data to CSV file for analysis and plotting
+  fields:
+    days:
+      name: Days
+      description: Number of days of historical data to export (1-365)
+      required: false
+      default: 30
+      example: 30
+      selector:
+        number:
+          min: 1
+          max: 365
+          mode: box
+

@@ -60,7 +60,8 @@ async def async_setup_entry(
         ContactEnergyCurrentPriceSensor(entry, api, peak_rate, offpeak_rate),
         ContactEnergyPeakCostSensor(entry, api, usage_days, peak_rate),
         ContactEnergyOffPeakCostSensor(entry, api, usage_days, offpeak_rate),
-        ContactEnergyOffPeakPeriodSensor(entry, api),        ContactEnergyNextBillDateSensor(entry, api, usage_days),
+        ContactEnergyOffPeakPeriodSensor(entry, api),        
+        ContactEnergyNextBillDateSensor(entry, api, usage_days),
         ContactEnergyNextBillAmountSensor(entry, api, usage_days),    ]
 
     async_add_entities(sensors, True)
@@ -194,16 +195,16 @@ class ContactEnergyUsageSensor(SensorEntity):
                 if offpeak_float > 0:
                     # This is off-peak/free energy
                     freeKWhRunningSum += value
-                    # Add hourly statistics with both state (this hour's value) and sum (cumulative)
+                    # Add hourly statistics with state only (Home Assistant will calculate sum)
                     freeKWhStatistics.append(
-                        StatisticData(start=timestamp, state=value, sum=freeKWhRunningSum)
+                        StatisticData(start=timestamp, state=value)
                     )
                 else:
                     # This is peak energy
                     kWhRunningSum += value
-                    # Add hourly statistics with both state (this hour's value) and sum (cumulative)
+                    # Add hourly statistics with state only (Home Assistant will calculate sum)
                     kWhStatistics.append(
-                        StatisticData(start=timestamp, state=value, sum=kWhRunningSum)
+                        StatisticData(start=timestamp, state=value)
                     )
 
             # Track latest day with data
