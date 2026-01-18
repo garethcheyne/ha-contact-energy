@@ -13,11 +13,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .api import ContactEnergyApi
-from .const import DOMAIN, CONF_USAGE_DAYS
+from .const import DOMAIN, CONF_USAGE_DAYS, CONF_PEAK_RATE, CONF_OFFPEAK_RATE
 
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_USAGE_DAYS = 10
+DEFAULT_PEAK_RATE = 0.30
+DEFAULT_OFFPEAK_RATE = 0.15
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -25,6 +27,12 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_PASSWORD): str,
         vol.Optional(CONF_USAGE_DAYS, default=DEFAULT_USAGE_DAYS): vol.All(
             vol.Coerce(int), vol.Range(min=1, max=30)
+        ),
+        vol.Optional(CONF_PEAK_RATE, description="Override peak rate (leave empty to fetch from bill)"): vol.All(
+            vol.Coerce(float), vol.Range(min=0.01, max=5.0)
+        ),
+        vol.Optional(CONF_OFFPEAK_RATE, description="Override off-peak rate (leave empty to fetch from bill)"): vol.All(
+            vol.Coerce(float), vol.Range(min=0.0, max=5.0)
         ),
     }
 )

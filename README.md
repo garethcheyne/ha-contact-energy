@@ -68,10 +68,6 @@ This Home Assistant custom integration connects to Contact Energy's API to provi
 
 ## ⚙️ Configuration
 
----
-
-## ⚙️ Configuration
-
 3. Search for **"Contact Energy"**
 4. Enter your Contact Energy account credentials:
    
@@ -105,30 +101,163 @@ sensor:
 
 ---
 
-## 📊 Sensors and Data
+## ⚙️ Configuration
+
+The integration is configured through Home Assistant's UI:
+
+### Configuration Options
+
+| Parameter | Required | Type | Default | Description |
+|-----------|----------|------|---------|-------------|
+| **Email** | Yes | string | - | Your Contact Energy account email |
+| **Password** | Yes | password | - | Your Contact Energy account password |
+| **Usage Days** | No | integer (1-30) | 10 | Number of days of historical data to fetch |
+| **Peak Rate** | No | decimal (0.01-5.0) | Auto-detect | Peak rate override (NZD/kWh) - leave empty to fetch from API |
+| **Off-Peak Rate** | No | decimal (0.0-5.0) | Auto-detect | Off-peak rate override (NZD/kWh) - leave empty to fetch from API |
+
+### Rate Configuration
+
+The integration supports **three modes** for rate configuration:
+
+1. **API Auto-Detection (Recommended)** - Leave rate fields empty
+   - Fetches rates automatically from your bill API
+   - Updates based on your actual plan pricing
+   - Example: `Peak: $0.327/kWh, Off-Peak: $0.161/kWh`
+
+2. **Manual Override** - Enter specific values
+   - Use when you want to override API-detected rates
+   - Useful for custom calculations or testing
+   - Example: `Peak: $0.35/kWh, Off-Peak: $0.20/kWh`
+
+3. **Default Fallback** - If API fails and no override provided
+   - Peak: $0.30/kWh
+   - Off-Peak: $0.15/kWh
+
+**Priority:** Manual Override > API Auto-Detection > Default Fallback
 
 ---
 
 ## 📊 Sensors and Data
 
-| `sensor.contact_energy_energy_usage` | Total cumulative energy usage | kWh | Every 3 hours |
+This integration creates **7 sensors** for comprehensive energy monitoring:
 
-### Sensor Attributes
+### Sensor Entities
 
-The sensor provides rich attributes with additional information:
+#### 1. **Energy Usage Sensor**
+- **Entity ID:** `sensor.contact_energy_usage`
+- **Unit:** kWh
+- **Update Frequency:** Every 3 hours
+- **Description:** Total cumulative energy consumption
+- **Example Value:** `26.64 kWh`
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `account_id` | Your Contact Energy account ID | `502023369` |
-| `contract_id` | Your contract ID | `1351884555` |
-| `last_daily_cost` | Cost of the most recent day with data | `$9.83` |
-| `plan_name` | Your current energy plan | `Good Charge` |
-| `plan_id` | Plan identifier | `RGCHO00` |
-| `campaign` | Campaign description | `Good Charge` |
-| `contract_start_date` | Contract start date | `2025-09-17` |
-| `contract_end_date` | Contract end date | `9999-12-31` |
-| `prompt_payment_discount` | Prompt payment discount percentage | `0%` |
-| `service_type` | Service type | `Electricity` |
+**Attributes:**
+```yaml
+account_id: "502023369"
+contract_id: "1351884555"
+plan_name: "Good Charge"
+plan_id: "RGCHO00"
+campaign: "Good Charge"
+benefit_group: "Good Charge"
+contract_start: "2025-09-17"
+contract_end: "9999-12-31"
+ppd_percentage: "0%"
+service_type: "Electricity"
+peak_kwh: 15.63
+offpeak_kwh: 11.01
+peak_rate: 0.327
+offpeak_rate: 0.161
+daily_charge: 2.885
+```
+
+#### 2. **Current Price Sensor**
+- **Entity ID:** `sensor.contact_energy_current_price`
+- **Unit:** NZD/kWh
+- **Update Frequency:** Real-time (changes based on time of day)
+- **Description:** Current electricity rate (peak or off-peak)
+- **Example Value:** `$0.3270/kWh` (during 7AM-9PM) or `$0.1610/kWh` (during 9PM-7AM)
+- **Use Case:** Energy Dashboard cost tracking
+
+**Attributes:**
+```yaml
+current_period: "Peak (7AM - 9PM)"  # or "Off-Peak (9PM - 7AM)"
+peak_rate: 0.327
+offpeak_rate: 0.161
+rate_source: "API-Fetched"  # or "Manual-Override" or "Default"
+```
+
+#### 3. **Peak Cost Sensor**
+- **Entity ID:** `sensor.contact_energy_peak_cost`
+- **Unit:** NZD
+- **Update Frequency:** Every 3 hours
+- **Description:** Total cost of peak energy consumption
+- **Calculation:** `peak_kwh × peak_rate`
+- **Example Value:** `$5.11 NZD`
+
+**Attributes:**
+```yaml
+peak_kwh: 15.63
+peak_rate: 0.327
+peak_cost: 5.11
+```
+
+#### 4. **Off-Peak Cost Sensor**
+- **Entity ID:** `sensor.contact_energy_offpeak_cost`
+- **Unit:** NZD
+- **Update Frequency:** Every 3 hours
+- **Description:** Total cost of off-peak energy consumption
+- **Calculation:** `offpeak_kwh × offpeak_rate`
+- **Example Value:** `$1.77 NZD`
+
+**Attributes:**
+```yaml
+offpeak_kwh: 11.01
+offpeak_rate: 0.161
+offpeak_cost: 1.77
+```
+
+#### 5. **Off-Peak Period Sensor**
+- **Entity ID:** `sensor.contact_energy_offpeak_period`
+- **Unit:** -
+- **Update Frequency:** On startup
+- **Description:** Time range for off-peak pricing
+- **Example Value:** `21:00 - 07:00` or `9PM - 7AM`
+
+**Attributes:**
+```yaml
+start_time: "21:00"
+end_time: "07:00"
+duration_hours: 10
+```
+
+#### 6. **Next Bill Date Sensor**
+- **Entity ID:** `sensor.contact_energy_next_bill_date`
+- **Unit:** -
+- **Device Class:** Date
+- **Update Frequency:** Every 3 hours
+- **Description:** Next bill due date
+- **Example Value:** `2026-02-17`
+
+**Attributes:**
+```yaml
+billing_start: "2026-01-18"
+billing_end: "2026-02-17"
+```
+
+#### 7. **Next Bill Amount Sensor**
+- **Entity ID:** `sensor.contact_energy_next_bill_amount`
+- **Unit:** NZD
+- **Device Class:** Monetary
+- **Update Frequency:** Every 3 hours
+- **Description:** Estimated next bill amount
+- **Example Value:** `$145.32 NZD`
+
+**Attributes:**
+```yaml
+billing_period: "30 days"
+peak_cost: 95.50
+offpeak_cost: 34.82
+daily_charges: 15.00
+```
 
 ---
 
@@ -141,21 +270,39 @@ This integration creates **external statistics** that seamlessly integrate with 
 | Statistic ID | Description | Use Case |
 |--------------|-------------|----------|
 | `contact_energy:energy_consumption` | Total energy consumption with hourly granularity | Track overall energy usage patterns |
-| `contact_energy:free_energy_consumption` | Free/off-peak energy consumption | Monitor savings from off-peak usage |
+| `contact_energy:peak_consumption` | Peak period consumption only | Monitor daytime usage |
+| `contact_energy:offpeak_consumption` | Off-peak period consumption only | Monitor nighttime/off-peak usage |
 
 ### How to Add to Energy Dashboard
 
 1. Navigate to **Settings** → **Dashboards** → **Energy**
 2. Click **Add Consumption** in the Electricity section
-3. Select `contact_energy:energy_consumption` from the dropdown
-4. Optionally add `contact_energy:free_energy_consumption` to track off-peak usage separately
+3. Select `sensor.contact_energy_current_price` for **Use an entity with current price**
+4. Optionally add individual statistics:
+   - `contact_energy:energy_consumption` - Total consumption
+   - `contact_energy:peak_consumption` - Peak hours only
+   - `contact_energy:offpeak_consumption` - Off-peak hours only
 
-### Hourly Data
+### Hourly Data Structure
 
-The integration fetches **hourly energy usage data** from Contact Energy's API. Each hour's consumption is stored as a separate data point with:
-- ⏰ Timestamp (hourly precision)
-- ⚡ Energy consumed (kWh)
-- 💵 Cost (NZD)
+The integration stores **hourly statistics** with the following data:
+
+```python
+StatisticData(
+    start=datetime(2026, 1, 16, 0, 0),  # Hour start
+    state=1.15,                          # kWh consumed
+    sum=cumulative_total                 # Running total
+)
+```
+
+**Example Hour:**
+```yaml
+timestamp: "2026-01-16T00:00:00+13:00"
+energy: 1.15 kWh
+cost: $0.185 NZD
+period: "Off-Peak"
+rate: $0.161/kWh
+```
 - 🌙 Off-peak indicator
 
 This hourly granularity allows the Energy Dashboard to display detailed consumption patterns throughout the day.

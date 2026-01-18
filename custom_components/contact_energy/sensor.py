@@ -34,14 +34,34 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     api = data["api"]
     usage_days = data["usage_days"]
+    
+    # Priority: User-configured rates > API-fetched rates > Default values
+    user_peak_rate = entry.data.get("peak_rate")
+    user_offpeak_rate = entry.data.get("offpeak_rate")
+    
+    if user_peak_rate is not None and user_offpeak_rate is not None:
+        # User has explicitly configured rates - use those
+        peak_rate = user_peak_rate
+        offpeak_rate = user_offpeak_rate
+        _LOGGER.info("Using user-configured rates: Peak=$%.4f, Off-peak=$%.4f", peak_rate, offpeak_rate)
+    elif api._bill_details and api._bill_details.get("peak_rate", 0) > 0:
+        # No user override - use API-fetched rates
+        peak_rate = api._bill_details["peak_rate"]
+        offpeak_rate = api._bill_details["offpeak_rate"]
+        _LOGGER.info("Using API-fetched rates: Peak=$%.4f, Off-peak=$%.4f", peak_rate, offpeak_rate)
+    else:
+        # Fallback to defaults
+        peak_rate = 0.30
+        offpeak_rate = 0.15
+        _LOGGER.warning("Using default rates: Peak=$%.4f, Off-peak=$%.4f", peak_rate, offpeak_rate)
 
     sensors = [
         ContactEnergyUsageSensor(entry, api, usage_days),
-        ContactEnergyCurrentPriceSensor(entry, api),
-        ContactEnergyPeakCostSensor(entry, api, usage_days),
-        ContactEnergyOffPeakCostSensor(entry, api, usage_days),
-        ContactEnergyOffPeakPeriodSensor(entry, api),
-    ]
+        ContactEnergyCurrentPriceSensor(entry, api, peak_rate, offpeak_rate),
+        ContactEnergyPeakCostSensor(entry, api, usage_days, peak_rate),
+        ContactEnergyOffPeakCostSensor(entry, api, usage_days, offpeak_rate),
+        ContactEnergyOffPeakPeriodSensor(entry, api),        ContactEnergyNextBillDateSensor(entry, api, usage_days),
+        ContactEnergyNextBillAmountSensor(entry, api, usage_days),    ]
 
     async_add_entities(sensors, True)
 
@@ -61,11 +81,18 @@ class ContactEnergyUsageSensor(SensorEntity):
         self._api = api
         self._usage_days = usage_days
         self._attr_unique_id = f"{entry.entry_id}_usage"
+        
+        # Build device info with plan details if available
+        plan_name = api._plan_details.get("plan_name", "Smart Meter") if api._plan_details else "Smart Meter"
+        sw_version = api._plan_details.get("plan_id", "Unknown") if api._plan_details else "Unknown"
+        
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name="Contact Energy",
             manufacturer="Contact Energy",
-            model="Smart Meter",
+            model=plan_name,
+            sw_version=sw_version,
+            configuration_url="https://www.contact.co.nz/myaccount",
             entry_type=DeviceEntryType.SERVICE,
         )
         self._last_total = 0.0
@@ -155,14 +182,7 @@ class ContactEnergyUsageSensor(SensorEntity):
                 except (ValueError, TypeError):
                     offpeak_float = 0.0
                 
-                if offpeak_float > 0:
-                    # This is off-peak/free energy
-                    freeKWhRunningSum += value
-                else:
-                    # This is peak energy
-                    kWhRunningSum += value
-
-                # Parse timestamp
+                # Parse timestamp first (before adding to sums)
                 try:
                     timestamp = datetime.strptime(
                         point["date"], "%Y-%m-%dT%H:%M:%S.%f%z"
@@ -170,14 +190,21 @@ class ContactEnergyUsageSensor(SensorEntity):
                 except (KeyError, ValueError):
                     _LOGGER.warning("Failed to parse timestamp for data point")
                     continue
-
-                # Add hourly statistics with running sum
-                kWhStatistics.append(
-                    StatisticData(start=timestamp, sum=kWhRunningSum)
-                )
-                freeKWhStatistics.append(
-                    StatisticData(start=timestamp, sum=freeKWhRunningSum)
-                )
+                
+                if offpeak_float > 0:
+                    # This is off-peak/free energy
+                    freeKWhRunningSum += value
+                    # Add hourly statistics with both state (this hour's value) and sum (cumulative)
+                    freeKWhStatistics.append(
+                        StatisticData(start=timestamp, state=value, sum=freeKWhRunningSum)
+                    )
+                else:
+                    # This is peak energy
+                    kWhRunningSum += value
+                    # Add hourly statistics with both state (this hour's value) and sum (cumulative)
+                    kWhStatistics.append(
+                        StatisticData(start=timestamp, state=value, sum=kWhRunningSum)
+                    )
 
             # Track latest day with data
             if daily_total > 0:
@@ -240,7 +267,7 @@ class ContactEnergyCurrentPriceSensor(SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:cash-clock"
 
-    def __init__(self, entry: ConfigEntry, api) -> None:
+    def __init__(self, entry: ConfigEntry, api, peak_rate: float, offpeak_rate: float) -> None:
         """Initialize the sensor."""
         self._api = api
         self._attr_unique_id = f"{entry.entry_id}_current_price"
@@ -251,9 +278,10 @@ class ContactEnergyCurrentPriceSensor(SensorEntity):
             model="Smart Meter",
             entry_type=DeviceEntryType.SERVICE,
         )
-        self._peak_rate = 0.0
-        self._offpeak_rate = 0.0
+        self._peak_rate = peak_rate
+        self._offpeak_rate = offpeak_rate
         self._is_offpeak = False
+        self._attr_native_value = peak_rate
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -269,12 +297,12 @@ class ContactEnergyCurrentPriceSensor(SensorEntity):
         await self.hass.async_add_executor_job(self._update)
 
     def _update(self) -> None:
-        """Fetch current price from recent usage data."""
+        """Determine current price based on time period."""
         if not self._api._api_token:
             if not self._api.login():
                 return
 
-        # Get yesterday's data to calculate rates
+        # Get yesterday's data to determine current period
         yesterday = datetime.now() - timedelta(days=2)
         response = self._api.get_usage(
             str(yesterday.year),
@@ -283,40 +311,11 @@ class ContactEnergyCurrentPriceSensor(SensorEntity):
         )
 
         if not response:
+            # Default to peak rate if no data
+            self._attr_native_value = round(self._peak_rate, 4)
             return
 
-        peak_costs = []
-        offpeak_costs = []
         current_hour = datetime.now().hour
-
-        for point in response:
-            value = point.get("value")
-            dollar_value = point.get("dollarValue")
-            offpeak_value = point.get("offpeakValue", "0")
-            
-            if not value or not dollar_value:
-                continue
-
-            try:
-                kwh = float(value)
-                cost = float(dollar_value)
-                offpeak_float = float(offpeak_value) if offpeak_value else 0.0
-                
-                if kwh > 0 and cost > 0:
-                    rate = cost / kwh
-                    
-                    if offpeak_float > 0:
-                        offpeak_costs.append(rate)
-                    else:
-                        peak_costs.append(rate)
-            except (ValueError, TypeError):
-                continue
-
-        # Calculate average rates
-        if peak_costs:
-            self._peak_rate = sum(peak_costs) / len(peak_costs)
-        if offpeak_costs:
-            self._offpeak_rate = sum(offpeak_costs) / len(offpeak_costs)
 
         # Determine if current time is off-peak (based on yesterday's pattern)
         for point in response:
@@ -331,9 +330,9 @@ class ContactEnergyCurrentPriceSensor(SensorEntity):
                 continue
 
         # Set current price based on time of day
-        if self._is_offpeak and self._offpeak_rate > 0:
+        if self._is_offpeak:
             self._attr_native_value = round(self._offpeak_rate, 4)
-        elif self._peak_rate > 0:
+        else:
             self._attr_native_value = round(self._peak_rate, 4)
 
 
@@ -348,10 +347,11 @@ class ContactEnergyPeakCostSensor(SensorEntity):
     _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:currency-usd"
 
-    def __init__(self, entry: ConfigEntry, api, usage_days: int) -> None:
+    def __init__(self, entry: ConfigEntry, api, usage_days: int, peak_rate: float) -> None:
         """Initialize the sensor."""
         self._api = api
         self._usage_days = usage_days
+        self._peak_rate = peak_rate
         self._attr_unique_id = f"{entry.entry_id}_peak_cost"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -408,13 +408,13 @@ class ContactEnergyPeakCostSensor(SensorEntity):
 
                 # Peak time = when offpeakValue is 0
                 if offpeak_float == 0:
-                    dollar_value = point.get("dollarValue", "0")
                     try:
-                        total_peak_cost += float(dollar_value) if dollar_value else 0.0
                         total_peak_kwh += float(value)
                     except (ValueError, TypeError):
                         pass
 
+        # Calculate cost from kWh and configured rate
+        total_peak_cost = total_peak_kwh * self._peak_rate
         self._attr_native_value = round(total_peak_cost, 2)
         self._peak_cost = total_peak_cost
         self._peak_kwh = total_peak_kwh
@@ -430,10 +430,11 @@ class ContactEnergyOffPeakCostSensor(SensorEntity):
     _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:currency-usd-off"
 
-    def __init__(self, entry: ConfigEntry, api, usage_days: int) -> None:
+    def __init__(self, entry: ConfigEntry, api, usage_days: int, offpeak_rate: float) -> None:
         """Initialize the sensor."""
         self._api = api
         self._usage_days = usage_days
+        self._offpeak_rate = offpeak_rate
         self._attr_unique_id = f"{entry.entry_id}_offpeak_cost"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -490,16 +491,69 @@ class ContactEnergyOffPeakCostSensor(SensorEntity):
 
                 # Off-peak time = when offpeakValue > 0
                 if offpeak_float > 0:
-                    offpeak_dollar = point.get("offpeakDollarValue", point.get("dollarValue", "0"))
                     try:
-                        total_offpeak_cost += float(offpeak_dollar) if offpeak_dollar else 0.0
                         total_offpeak_kwh += float(value)
                     except (ValueError, TypeError):
                         pass
 
+        # Calculate cost from kWh and configured rate
+        total_offpeak_cost = total_offpeak_kwh * self._offpeak_rate
         self._attr_native_value = round(total_offpeak_cost, 2)
         self._offpeak_cost = total_offpeak_cost
         self._offpeak_kwh = total_offpeak_kwh
+
+
+class ContactEnergyNextBillDateSensor(SensorEntity):
+    """Sensor for next bill due date."""
+
+    def __init__(self, entry, api, usage_days):
+        """Initialize the sensor."""
+        self._api = api
+        self._attr_name = "Contact Energy Next Bill Date"
+        self._attr_unique_id = f"contact_energy_{entry.entry_id}_next_bill_date"
+        self._attr_device_class = SensorDeviceClass.DATE
+        self._attr_icon = "mdi:calendar-clock"
+
+    def update(self):
+        """Update sensor."""
+        if self._api._bill_details and self._api._bill_details.get("next_bill_date"):
+            # Parse date string (ISO format) and extract just the date
+            date_str = self._api._bill_details["next_bill_date"]
+            if date_str:
+                # Expected format: 2026-02-17T00:00:00+13:00
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                    self._attr_native_value = dt.date()
+                except (ValueError, AttributeError):
+                    # Fallback: try to extract just the date part
+                    self._attr_native_value = date_str[:10] if len(date_str) >= 10 else None
+            else:
+                self._attr_native_value = None
+        else:
+            self._attr_native_value = None
+
+
+class ContactEnergyNextBillAmountSensor(SensorEntity):
+    """Sensor for next bill amount."""
+
+    def __init__(self, entry, api, usage_days):
+        """Initialize the sensor."""
+        self._api = api
+        self._attr_name = "Contact Energy Next Bill Amount"
+        self._attr_unique_id = f"contact_energy_{entry.entry_id}_next_bill_amount"
+        self._attr_device_class = SensorDeviceClass.MONETARY
+        self._attr_native_unit_of_measurement = "NZD"
+        self._attr_icon = "mdi:currency-usd"
+        self._attr_state_class = SensorStateClass.TOTAL
+
+    def update(self):
+        """Update sensor."""
+        if self._api._bill_details:
+            amount = self._api._bill_details.get("next_bill_amount", 0)
+            self._attr_native_value = round(amount, 2) if amount else 0.0
+        else:
+            self._attr_native_value = 0.0
 
 
 class ContactEnergyOffPeakPeriodSensor(SensorEntity):
