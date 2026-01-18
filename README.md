@@ -163,16 +163,11 @@ This hourly granularity allows the Energy Dashboard to display detailed consumpt
 ---
 
 ## ⚠️ Data Availability
----
-
-## ⚠️ Data Availability
 
 Contact Energy usage data is typically **delayed by 1-2 days**. This is a limitation of Contact Energy's API, not this integration.
 
 - ✅ **Expected:** No data for yesterday or today
 - ✅ **Normal:** Data available from 2-3 days ago onwards
-
-## 🔧 API Documentation
 
 ---
 
