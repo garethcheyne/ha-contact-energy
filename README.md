@@ -1,7 +1,7 @@
 # Contact Energy Integration for Home Assistant
 
 <p align="center">
-  <img src="custom_components/contact_energy/icon@2x.png" alt="Contact Energy" width="200"/>
+  <img src="https://raw.githubusercontent.com/garethcheyne/ha-contact-energy/main/custom_components/contact_energy/icon@2x.png" alt="Contact Energy" width="200"/>
 </p>
 
 <p align="center">
@@ -46,10 +46,6 @@ This Home Assistant custom integration connects to Contact Energy's API to provi
 
 ## 📦 Installation
 
----
-
-## 📦 Installation
-
 ### Option 1: HACS (Recommended)
 
 1. Ensure [HACS](https://hacs.xyz/docs/setup/download) is installed in your Home Assistant instance
@@ -76,10 +72,6 @@ This Home Assistant custom integration connects to Contact Energy's API to provi
 
 ## ⚙️ Configuration
 
-### UI Setup (v2026.01.18+)
-
-1. Navigate to **Settings** → **Devices & Services** in Home Assistant
-2. Click the **+ Add Integration** button
 3. Search for **"Contact Energy"**
 4. Enter your Contact Energy account credentials:
    
@@ -119,10 +111,6 @@ sensor:
 
 ## 📊 Sensors and Data
 
-### Primary Sensor
-
-| Entity ID | Description | Unit | Update Frequency |
-|-----------|-------------|------|------------------|
 | `sensor.contact_energy_energy_usage` | Total cumulative energy usage | kWh | Every 3 hours |
 
 ### Sensor Attributes
@@ -183,9 +171,6 @@ Contact Energy usage data is typically **delayed by 1-2 days**. This is a limita
 
 - ✅ **Expected:** No data for yesterday or today
 - ✅ **Normal:** Data available from 2-3 days ago onwards
-- ⏰ **Update Frequency:** Every 3 hours (configurable via SCAN_INTERVAL)
-
----
 
 ## 🔧 API Documentation
 
@@ -196,10 +181,6 @@ Contact Energy usage data is typically **delayed by 1-2 days**. This is a limita
 This integration uses Contact Energy's REST API. The integration automatically handles authentication and data retrieval.
 
 <details>
-<summary><strong>Click to view API technical details</strong></summary>
-
-### Authentication Flow
-
 1. **Login** - Authenticate with email/password to receive a session token
 2. **Get Accounts** - Retrieve account and contract IDs
 3. **Get Plan Details** - Fetch current energy plan information
@@ -337,10 +318,6 @@ Your support and contributions are welcome! Here's how you can help:
 #### 🔒 Authentication Improvements
 - ✅ Updated to use Contact Energy's current API keys
 - ✅ Fixed authentication flow to match official web interface
-- ✅ Improved error handling with retry logic and timeouts
-- ✅ Removed deprecated session refresh logic
-
-#### ✨ New Features
 - 🆕 **Plan Details** - Sensor now includes your energy plan information as attributes
   - Plan name and campaign details
   - Contract start/end dates
