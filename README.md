@@ -1,7 +1,7 @@
 # Contact Energy Integration for Home Assistant
 
 <p align="center">
-  <img src="https://brands.home-assistant.io/_/contact_energy/icon.png" alt="Contact Energy" width="200"/>
+  <img src="https://github.com/home-assistant/brands/blob/master/custom_integrations/contact_energy/logo.png" alt="Contact Energy" width="200"/>
 </p>
 
 <p align="center">
