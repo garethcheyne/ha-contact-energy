@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" log --oneline -20)",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" log -5 --pretty=format:\"%H %s\")",
+      "Bash(git -C \"C:\\Apps\\Projects\\HomeAssistant\\ContactEnergyNZ\" log --all --pretty=format:\"%s\")",
+      "Bash(wc:*)",
+      "Bash(python test_api.py:*)",
+      "Bash(python -m ruff check:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

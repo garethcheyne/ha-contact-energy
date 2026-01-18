@@ -15,3 +15,9 @@ coverage.xml
 # Home Assistant configuration
 config/*
 !config/configuration.yaml
+
+# Secrets
+.env
+
+# Test scripts
+test_api.py
