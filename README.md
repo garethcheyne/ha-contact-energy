@@ -26,7 +26,7 @@
 
 This Home Assistant custom integration connects to Contact Energy's API to provide real-time monitoring of your electricity usage and costs. Perfect for New Zealand homes wanting to track their energy consumption through Home Assistant's powerful Energy Dashboard.
 
-**Version:** v2026.01.18.1
+**Version:** v2026.01.18.02
 
 > **Attribution:** This is a fork of the original [ha-contact-energy](https://github.com/codyc1515/ha-contact-energy) integration by [@codyc1515](https://github.com/codyc1515). Credit to them for the original implementation.
 
@@ -289,11 +289,7 @@ Your support and contributions are welcome! Here's how you can help:
 
 ## 📝 Changelog
 
----
-
-## 📝 Changelog
-
-### v2026.01.18
+### v2026.01.18.02
 
 **Major Update - Improved Authentication & Features**
 
