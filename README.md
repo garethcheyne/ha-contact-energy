@@ -1,7 +1,7 @@
 # Contact Energy Integration for Home Assistant
 
 <p align="center">
-  <img src="https://www.contact.co.nz/etc/designs/contact/dist/images/logo.svg" alt="Contact Energy Logo" width="300"/>
+  <img src="custom_components/contact_energy/icon@2x.png" alt="Contact Energy" width="200"/>
 </p>
 
 <p align="center">
