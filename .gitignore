@@ -21,3 +21,9 @@ config/*
 
 # Test scripts
 test_api.py
+
+# Node.js
+node_modules/
+convert-icon.js
+package.json
+package-lock.json

@@ -8,7 +8,11 @@
       "Bash(wc:*)",
       "Bash(python test_api.py:*)",
       "Bash(python -m ruff check:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm install:*)",
+      "Bash(node convert-icon.js:*)",
+      "Bash(ls:*)"
     ]
   }
 }

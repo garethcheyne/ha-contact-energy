@@ -69,6 +69,14 @@ Contact Energy usage data is typically delayed by 1-2 days. This is a limitation
 ## Known Issues
 None known.
 
+## Branding / Icon
+To display the Contact Energy logo in Home Assistant, the icons need to be submitted to the [Home Assistant Brands](https://github.com/home-assistant/brands) repository.
+
+Submit a PR to add `icon.png` (256x256) and `icon@2x.png` (512x512) to:
+```
+custom_integrations/contact_energy/
+```
+
 ## Contributing
 Your support is welcomed. Please open issues or pull requests on GitHub.
 
