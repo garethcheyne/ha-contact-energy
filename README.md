@@ -1,7 +1,7 @@
 # Contact Energy Integration for Home Assistant
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/garethcheyne/ha-contact-energy/main/custom_components/contact_energy/icon@2x.png" alt="Contact Energy" width="200"/>
+  <img src="https://brands.home-assistant.io/_/contact_energy/icon.png" alt="Contact Energy" width="200"/>
 </p>
 
 <p align="center">
@@ -278,19 +278,6 @@ Energy is classified as "free" or off-peak when `offpeakValue` > 0. During peak 
 ## 🐛 Known Issues
 
 None currently known. Please [report any issues](https://github.com/garethcheyne/ha-contact-energy/issues) you encounter.
-
----
-
-## 🎨 Branding / Icon
-
-To display the Contact Energy logo in Home Assistant, the icons need to be submitted to the [Home Assistant Brands](https://github.com/home-assistant/brands) repository.
-
-**How to contribute:**
-1. Create `icon.png` (256x256px) and `icon@2x.png` (512x512px)
-2. Submit a PR to Home Assistant Brands adding them to:
-   ```
-   custom_integrations/contact_energy/
-   ```
 
 ---
 
