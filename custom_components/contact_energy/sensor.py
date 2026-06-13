@@ -5,8 +5,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import logging
 
+from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
-from homeassistant.components.recorder.statistics import async_add_external_statistics
+from homeassistant.components.recorder.statistics import (
+    async_add_external_statistics,
+    get_last_statistics,
+)
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -126,6 +130,18 @@ class ContactEnergyUsageSensor(SensorEntity):
     async def async_update(self) -> None:
         """Update the sensor."""
         await self.hass.async_add_executor_job(self._update)
+        await _async_store_energy_statistics(
+            self.hass,
+            f"{DOMAIN}:energy_consumption",
+            "Contact Energy",
+            getattr(self, "_pending_peak", []),
+        )
+        await _async_store_energy_statistics(
+            self.hass,
+            f"{DOMAIN}:free_energy_consumption",
+            "Contact Energy Free",
+            getattr(self, "_pending_free", []),
+        )
 
     def _update(self) -> None:
         """Fetch usage data (runs in executor)."""
@@ -195,17 +211,11 @@ class ContactEnergyUsageSensor(SensorEntity):
                 if offpeak_float > 0:
                     # This is off-peak/free energy
                     freeKWhRunningSum += value
-                    # Add hourly statistics with state only (Home Assistant will calculate sum)
-                    freeKWhStatistics.append(
-                        StatisticData(start=timestamp, state=value)
-                    )
+                    freeKWhStatistics.append((timestamp, value))
                 else:
                     # This is peak energy
                     kWhRunningSum += value
-                    # Add hourly statistics with state only (Home Assistant will calculate sum)
-                    kWhStatistics.append(
-                        StatisticData(start=timestamp, state=value)
-                    )
+                    kWhStatistics.append((timestamp, value))
 
             # Track latest day with data
             if daily_total > 0:
@@ -226,36 +236,11 @@ class ContactEnergyUsageSensor(SensorEntity):
             freeKWhRunningSum,
         )
 
-        # Add statistics for energy dashboard
-        if kWhStatistics:
-            kWhMetadata = StatisticMetaData(
-                has_mean=False,
-                has_sum=True,
-                name="Contact Energy",
-                source=DOMAIN,
-                statistic_id=f"{DOMAIN}:energy_consumption",
-                unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            )
-            async_add_external_statistics(self.hass, kWhMetadata, kWhStatistics)
-            _LOGGER.debug(
-                "Added %d statistics for contact_energy:energy_consumption",
-                len(kWhStatistics)
-            )
-
-        if freeKWhStatistics:
-            freeKWhMetadata = StatisticMetaData(
-                has_mean=False,
-                has_sum=True,
-                name="Contact Energy Free",
-                source=DOMAIN,
-                statistic_id=f"{DOMAIN}:free_energy_consumption",
-                unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            )
-            async_add_external_statistics(self.hass, freeKWhMetadata, freeKWhStatistics)
-            _LOGGER.debug(
-                "Added %d statistics for contact_energy:free_energy_consumption",
-                len(freeKWhStatistics)
-            )
+        # Stash parsed (timestamp, kwh) points. The statistics, with a correct
+        # cumulative sum, are written from async_update which can safely use the
+        # recorder executor.
+        self._pending_peak = kWhStatistics
+        self._pending_free = freeKWhStatistics
 
 
 class ContactEnergyCurrentPriceSensor(SensorEntity):
@@ -652,3 +637,48 @@ class ContactEnergyOffPeakPeriodSensor(SensorEntity):
             self._attr_native_value = f"{self._offpeak_start} - {self._offpeak_end}"
         else:
             self._attr_native_value = "No off-peak detected"
+
+
+async def _async_store_energy_statistics(hass, statistic_id, name, points):
+    """Write external energy statistics with a correct cumulative sum.
+
+    Home Assistant's Energy Dashboard requires every statistic point to carry a
+    monotonically increasing ``sum``; it does NOT derive this from ``state``.
+    We continue the running total from the last stored value and only append
+    points newer than what is already recorded, to avoid double counting.
+    ``points`` is an iterable of ``(datetime, kwh)`` tuples.
+    """
+    if not points:
+        return
+    points = sorted(points, key=lambda p: p[0])
+    last = await get_instance(hass).async_add_executor_job(
+        get_last_statistics, hass, 1, statistic_id, True, {"sum"}
+    )
+    running_sum = 0.0
+    last_start = None
+    if last and statistic_id in last and last[statistic_id]:
+        running_sum = last[statistic_id][0].get("sum") or 0.0
+        last_start = last[statistic_id][0].get("start")
+    statistics = []
+    for timestamp, value in points:
+        if last_start is not None and timestamp.timestamp() <= last_start:
+            continue
+        running_sum += value
+        statistics.append(
+            StatisticData(
+                start=timestamp,
+                state=round(running_sum, 3),
+                sum=round(running_sum, 3),
+            )
+        )
+    if not statistics:
+        return
+    metadata = StatisticMetaData(
+        has_mean=False,
+        has_sum=True,
+        name=name,
+        source=DOMAIN,
+        statistic_id=statistic_id,
+        unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+    )
+    async_add_external_statistics(hass, metadata, statistics)
