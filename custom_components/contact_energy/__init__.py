@@ -13,7 +13,7 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.statistics import async_add_external_statistics, clear_statistics, StatisticData, StatisticMetaData
+from homeassistant.components.recorder.statistics import async_add_external_statistics, clear_statistics, get_last_statistics, StatisticData, StatisticMetaData
 from homeassistant.const import UnitOfEnergy
 
 from .api import ContactEnergyApi
@@ -220,14 +220,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     
                     if offpeak_value > 0:
                         # This is off-peak/free energy
-                        free_kWh_statistics.append(
-                            StatisticData(start=timestamp, state=value)
-                        )
+                        free_kWh_statistics.append((timestamp, value))
                     else:
                         # This is peak energy
-                        kWh_statistics.append(
-                            StatisticData(start=timestamp, state=value)
-                        )
+                        kWh_statistics.append((timestamp, value))
                 except (KeyError, ValueError) as e:
                     _LOGGER.warning(f"Failed to parse data point: {e}")
                     continue
@@ -240,31 +236,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("No historical data found to import")
             return
         
-        # Import peak energy statistics
-        if kWh_statistics:
-            kWh_metadata = StatisticMetaData(
-                has_mean=False,
-                has_sum=True,
-                name="Contact Energy",
-                source=DOMAIN,
-                statistic_id=f"{DOMAIN}:energy_consumption",
-                unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            )
-            async_add_external_statistics(hass, kWh_metadata, kWh_statistics)
-            _LOGGER.info(f"Imported {len(kWh_statistics)} peak energy statistics")
-        
-        # Import off-peak energy statistics
-        if free_kWh_statistics:
-            free_kWh_metadata = StatisticMetaData(
-                has_mean=False,
-                has_sum=True,
-                name="Contact Energy Free",
-                source=DOMAIN,
-                statistic_id=f"{DOMAIN}:free_energy_consumption",
-                unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            )
-            async_add_external_statistics(hass, free_kWh_metadata, free_kWh_statistics)
-            _LOGGER.info(f"Imported {len(free_kWh_statistics)} off-peak energy statistics")
+        # Import statistics with a correct cumulative sum (see helper).
+        imported_peak = await _async_store_energy_statistics(
+            hass, f"{DOMAIN}:energy_consumption", "Contact Energy", kWh_statistics
+        )
+        imported_free = await _async_store_energy_statistics(
+            hass, f"{DOMAIN}:free_energy_consumption", "Contact Energy Free", free_kWh_statistics
+        )
+        _LOGGER.info(
+            f"Imported {imported_peak} peak and {imported_free} off-peak energy statistics"
+        )
         
         total_records = len(kWh_statistics) + len(free_kWh_statistics)
         _LOGGER.info(
@@ -297,3 +278,49 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
+
+
+async def _async_store_energy_statistics(hass, statistic_id, name, points):
+    """Write external energy statistics with a correct cumulative sum.
+
+    Home Assistant's Energy Dashboard requires every statistic point to carry a
+    monotonically increasing ``sum``; it does NOT derive this from ``state``.
+    We continue the running total from the last stored value and only append
+    points newer than what is already recorded, to avoid double counting.
+    ``points`` is an iterable of ``(datetime, kwh)`` tuples.
+    """
+    if not points:
+        return 0
+    points = sorted(points, key=lambda p: p[0])
+    last = await get_instance(hass).async_add_executor_job(
+        get_last_statistics, hass, 1, statistic_id, True, {"sum"}
+    )
+    running_sum = 0.0
+    last_start = None
+    if last and statistic_id in last and last[statistic_id]:
+        running_sum = last[statistic_id][0].get("sum") or 0.0
+        last_start = last[statistic_id][0].get("start")
+    statistics = []
+    for timestamp, value in points:
+        if last_start is not None and timestamp.timestamp() <= last_start:
+            continue
+        running_sum += value
+        statistics.append(
+            StatisticData(
+                start=timestamp,
+                state=round(running_sum, 3),
+                sum=round(running_sum, 3),
+            )
+        )
+    if not statistics:
+        return 0
+    metadata = StatisticMetaData(
+        has_mean=False,
+        has_sum=True,
+        name=name,
+        source=DOMAIN,
+        statistic_id=statistic_id,
+        unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+    )
+    async_add_external_statistics(hass, metadata, statistics)
+    return len(statistics)
