@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## v2026.09.16.02
+
+### Fixed
+
+- Integration logo not displaying in Home Assistant/HACS. `icon.png` and `icon@2x.png` were sitting directly in `custom_components/contact_energy/`, but HA 2026.3+ only picks up local brand images from a `brand/` subdirectory. Moved both files to `custom_components/contact_energy/brand/`.
+
+---
+
 ## v2026.09.16.01
 
 ### Security
