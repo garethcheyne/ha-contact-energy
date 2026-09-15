@@ -1,6 +1,7 @@
 # artifacts
 __pycache__
 .pytest*
+.venv
 *.egg-info
 */build/*
 */dist/*
@@ -19,8 +20,8 @@ config/*
 # Secrets
 .env
 
-# Test scripts
-test_api.py
+# Ad-hoc local test scripts at the repo root (the real test suite lives in tests/)
+/test_api.py
 
 # Node.js
 node_modules/

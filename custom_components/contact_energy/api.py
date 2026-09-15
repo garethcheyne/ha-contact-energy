@@ -1,9 +1,12 @@
 """Contact Energy API."""
 
 import logging
+import re
 import requests
 
 _LOGGER = logging.getLogger(__name__)
+
+AUTH_ERROR_STATUS_CODES = (401, 403)
 
 
 class ContactEnergyApi:
@@ -25,6 +28,23 @@ class ContactEnergyApi:
         self._email = email
         self._password = password
 
+    def _clear_token_on_auth_failure(self, response, context: str) -> None:
+        """Clear the stored session token if the API reports it as invalid.
+
+        Without this, an expired token stays truthy forever, the
+        `if not self._api_token: login()` guards in the sensors never
+        fire again, and every subsequent request silently fails until
+        Home Assistant is restarted.
+        """
+        if response.status_code in AUTH_ERROR_STATUS_CODES:
+            _LOGGER.warning(
+                "Session token rejected (%s) during %s - clearing it so the "
+                "next update triggers a fresh login",
+                response.status_code,
+                context,
+            )
+            self._api_token = ""
+
     def login(self):
         """Login to the Contact Energy API."""
         headers = {"x-api-key": self._api_key_login}
@@ -40,11 +60,7 @@ class ContactEnergyApi:
             
             if response.status_code == requests.codes.ok:
                 json_result = response.json()
-                
-                print("\n=== Login Response ===")
-                print("Full Response Data:", json_result)
-                print("=" * 50)
-                
+
                 self._api_token = json_result["token"]
                 self._businessPartner = json_result.get("bp", "")
                 _LOGGER.debug("Logged in successfully")
@@ -91,6 +107,7 @@ class ContactEnergyApi:
                 
                 return True
             else:
+                self._clear_token_on_auth_failure(response, "get_accounts")
                 _LOGGER.error("Failed to fetch customer accounts: %s", response.text)
                 return False
         except (requests.exceptions.RequestException, KeyError, IndexError) as e:
@@ -142,6 +159,7 @@ class ContactEnergyApi:
                 _LOGGER.warning("No plan details found in response")
                 return False
             else:
+                self._clear_token_on_auth_failure(response, "get_plan_details")
                 _LOGGER.error("Failed to fetch plan details: %s", response.text)
                 return False
         except (requests.exceptions.RequestException, KeyError) as e:
@@ -173,9 +191,10 @@ class ContactEnergyApi:
                     )
                 return data if data else []
             else:
+                self._clear_token_on_auth_failure(response, "get_usage")
                 _LOGGER.error(
-                    "Failed to fetch usage data for %s: %s", 
-                    date_str, 
+                    "Failed to fetch usage data for %s: %s",
+                    date_str,
                     response.text
                 )
                 return False
@@ -185,18 +204,10 @@ class ContactEnergyApi:
 
     def get_bill_details(self):
         """Get current bill details including rates and charges."""
-        print("\n=== get_bill_details() called ===")
-        print(f"Token exists: {bool(self._api_token)}")
-        print(f"Account ID: {self._accountId}")
-        print(f"Business Partner: {self._businessPartner}")
-        
         if not self._api_token or not self._accountId or not self._businessPartner:
             _LOGGER.warning("Cannot fetch bill details - missing credentials (token=%s, accountId=%s, bp=%s)",
                           bool(self._api_token), bool(self._accountId), bool(self._businessPartner))
-            print("❌ Missing credentials - cannot fetch bill details")
             return False
-
-        print(f"Making request to: {self._url_base}/interactive-bill?ba={self._accountId}&bp={self._businessPartner}")
 
         headers = {
             "session": self._api_token,
@@ -211,17 +222,12 @@ class ContactEnergyApi:
                 timeout=30
             )
             
-            print(f"Response Status: {response.status_code}")
-            
             if response.status_code == requests.codes.ok:
                 bill_data = response.json()
-                
-                print("✅ Bill Data Retrieved Successfully!")
-                print("Bill Data:", bill_data)
-                
+
                 # Store for debugging
                 self._last_bill_response = bill_data
-                
+
                 _LOGGER.debug("Bill API Response: %s", bill_data)
                 
                 # Extract rates from VariableCharges
@@ -259,7 +265,6 @@ class ContactEnergyApi:
                     
                     # Intelligently detect peak vs off-peak from description
                     # Look for time patterns like "9PM - 7AM" or "7AM - 9PM"
-                    import re
                     time_pattern = r'(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))\s*[-–]\s*(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))'
                     match = re.search(time_pattern, description)
                     
@@ -337,10 +342,9 @@ class ContactEnergyApi:
                 )
                 return True
             else:
-                print(f"❌ API returned status {response.status_code}")
-                print(f"Response: {response.text[:500]}")
+                self._clear_token_on_auth_failure(response, "get_bill_details")
                 _LOGGER.warning(
-                    "Failed to fetch bill details: %s - %s", 
+                    "Failed to fetch bill details: %s - %s",
                     response.status_code,
                     response.text[:200] if response.text else "No response"
                 )

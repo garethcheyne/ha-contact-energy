@@ -41,6 +41,11 @@ ignore = [
 [flake8-pytest-style]
 fixture-parentheses = false
 
+[per-file-ignores]
+# Test methods are self-documenting by name; don't require docstrings on
+# every test/fixture/helper the way we do for the integration code itself.
+"tests/*" = ["D100", "D101", "D102", "D103", "D107"]
+
 [pyupgrade]
 keep-runtime-typing = true
 

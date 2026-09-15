@@ -26,7 +26,7 @@
 
 This Home Assistant custom integration connects to Contact Energy's API to provide real-time monitoring of your electricity usage and costs. Perfect for New Zealand homes wanting to track their energy consumption through Home Assistant's powerful Energy Dashboard.
 
-**Version:** v2026.01.19.01
+**Version:** v2026.09.16.01
 
 > **Attribution:** This is a fork of the original [ha-contact-energy](https://github.com/codyc1515/ha-contact-energy) integration by [@codyc1515](https://github.com/codyc1515). Credit to them for the original implementation.
 
@@ -532,7 +532,9 @@ Energy is classified as "free" or off-peak when `offpeakValue` > 0. During peak 
 
 ## 🐛 Known Issues
 
-None currently known. Please [report any issues](https://github.com/garethcheyne/ha-contact-energy/issues) you encounter.
+- **Redundant API calls:** `Energy Usage`, `Peak Cost`, and `Off-Peak Cost` each independently re-fetch the same days of usage data from Contact's API every update cycle, just to compute different aggregates from it. This works correctly but is ~3x more API traffic than necessary, and plausibly makes the integration more exposed to Contact's rate limiting than it needs to be. Consolidating these into a single shared fetch (e.g. a `DataUpdateCoordinator`) is a planned follow-up - tracked as a known limitation, not yet implemented.
+
+Please [report any other issues](https://github.com/garethcheyne/ha-contact-energy/issues) you encounter.
 
 ---
 
@@ -545,9 +547,41 @@ Your support and contributions are welcome! Here's how you can help:
 - 🔧 [Submit pull requests](https://github.com/garethcheyne/ha-contact-energy/pulls)
 - ⭐ Star this repository if you find it useful!
 
+### Running the tests
+
+The test suite mocks the HTTP layer and a handful of `homeassistant` symbols, so it never hits the real Contact Energy API and doesn't require installing Home Assistant itself:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r tests/requirements_test.txt
+pytest tests/ -v
+```
+
+`ruff check .` (see `.ruff.toml`) is run in CI alongside the test suite - please run both before opening a PR.
+
 ---
 
 ## 📝 Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full history. Latest release:
+
+### v2026.09.16.01
+
+**Security & Reliability Fixes**
+
+#### 🔒 Security
+- Removed debug `print()` statements in `api.py` that leaked the full login response - including the session token - and bill details to Home Assistant's logs.
+
+#### 🐛 Bug Fixes
+- **Sensors no longer overwrite good data with zero.** `Energy Usage`, `Peak Cost`, and `Off-Peak Cost` used to silently reset to `0.0` whenever Contact's API returned no data for the entire polling window (temporary lag, rate limiting), wiping out the last real reading. They now hold the last known good value until the next successful fetch.
+- **Expired session tokens no longer kill the integration until restart.** The API client never cleared `_api_token` after an auth failure, so once a session expired, every sensor's re-login guard stayed permanently false and all requests failed silently. A 401/403 now clears the token so the next update cycle re-authenticates automatically.
+- `Next Bill Date` / `Next Bill Amount` sensors now correctly group under the "Contact Energy" device tile in the UI (previously missing `has_entity_name`/device info). Existing entity IDs are unaffected.
+
+#### 🧪 Testing
+- Added a `pytest` suite (`tests/`) covering the API client and sensor aggregation logic, including regression tests for both bugs above. Runs in CI on every push/PR via `.github/workflows/test.yml`.
+
+---
 
 ### v2026.01.19.01
 
