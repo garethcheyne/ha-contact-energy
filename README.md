@@ -28,8 +28,6 @@ This Home Assistant custom integration connects to Contact Energy's API to provi
 
 **Version:** v2026.11.16.01
 
-> **Attribution:** This is a fork of the original [ha-contact-energy](https://github.com/codyc1515/ha-contact-energy) integration by [@codyc1515](https://github.com/codyc1515). Credit to them for the original implementation.
-
 ---
 
 ## ✨ Features
@@ -481,7 +479,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history. Latest release:
 <details>
 <summary>View older changelog entries</summary>
 
-### Original v2026.01.18 (Initial Fork)
+### v2026.01.18
 - Added UI-based configuration (Config Flow)
 - Credential validation before saving
 - Improved sensor with actual state values
@@ -501,7 +499,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Original integration by [@codyc1515](https://github.com/codyc1515)
 - Contact Energy for providing API access
 - Home Assistant community for ongoing support
 
