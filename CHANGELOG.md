@@ -2,6 +2,44 @@
 
 All notable changes to this project are documented in this file.
 
+## v2026.11.16.01
+
+Requires Home Assistant 2025.11 or newer.
+
+### Fixed
+
+- **Energy Dashboard showed no usage.** Statistics were written without the running total (`sum`) that the Energy Dashboard reads. Earlier versions wrote a sum but restarted it at 0 on every update, which caused negative spikes. Each update now carries the sum on from the last hour already stored. **After upgrading, run `contact_energy.import_historical_data` once with `clear_existing: true` and `confirm_clear: "yes"` to rebuild the history.**
+- **Home Assistant 2026.11 compatibility.** Statistics metadata uses `mean_type` instead of the deprecated `has_mean`, and sets `unit_class`.
+- **Options dialog crashed.** It assigned `self.config_entry`, which current Home Assistant no longer allows, and its methods were defined twice. Options were also saved where the integration never read them. Options now apply and reload the integration.
+- **The "clear existing" import crashed** because it awaited a function that isn't async.
+- **A failed login at startup was permanent.** A wrong password now starts Home Assistant's re-authentication flow. A network outage makes Home Assistant retry setup. The setup form now says "cannot connect" for network problems instead of "invalid password".
+- **Current Price could be up to 3 hours stale** and was guessed from usage two days earlier. It now uses the detected off-peak window and updates at the top of every hour.
+- **Wrong sensor classes.** Energy Usage, Peak Cost, Off-Peak Cost and Next Bill Amount had `state_class: total`, but they are rolling or point-in-time values, so Home Assistant recorded every drop as negative usage. They no longer have a state class. Current Price no longer combines `monetary` with `measurement`, which Home Assistant rejected.
+- Bill and plan details were only refreshed when logging in; they now refresh on every update.
+- Next Bill Date could be set to a string, which a date sensor rejects.
+- Dates are worked out in New Zealand time rather than the host's time zone.
+
+### Changed
+
+- All sensors share one `DataUpdateCoordinator` fetch, about 3× fewer API calls per update.
+- Hours with 0 kWh are now recorded. Both statistics series get a row every hour, so they have no gaps.
+- The import and export actions are registered once, accept `config_entry_id` when several accounts are set up, return a summary, and raise proper errors instead of only logging.
+- Translations added for the setup, re-authentication, options and action forms (`translations/en.json`).
+- Rate overrides apply independently, and an off-peak override of `0` is respected.
+
+### Marketplace
+
+- `manifest.json`: added `integration_type`, `categories` and `connectivity`, and removed the unsupported `icon` key.
+- `hacs.json`: added the minimum Home Assistant version (`2025.11.0`).
+- README installation instructions updated for the Home Assistant Marketplace.
+
+### Development
+
+- Tests cover the new parsing, running-sum and coordinator logic (81 tests).
+- `ruff` config updated for current ruff; CI uses Python 3.13. The dev container uses Python 3.14 and Home Assistant 2026.11.1. The release workflow strips the `v` from the tag when setting the manifest version.
+
+---
+
 ## v2026.09.16.02
 
 ### Fixed

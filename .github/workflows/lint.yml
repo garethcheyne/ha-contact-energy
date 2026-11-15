@@ -19,11 +19,10 @@ jobs:
         - name: "Set up Python"
           uses: actions/setup-python@v5.0.0
           with:
-            python-version: "3.11"
-            cache: "pip"
+            python-version: "3.13"
 
         - name: "Install requirements"
-          run: python3 -m pip install -r requirements.txt
+          run: python3 -m pip install ruff==0.17.5
 
         - name: "Run"
           run: python3 -m ruff check .

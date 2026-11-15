@@ -2,31 +2,94 @@
   "config": {
     "step": {
       "user": {
-        "title": "Contact Energy Setup",
-        "description": "Configure your Contact Energy integration",
+        "title": "Contact Energy",
+        "description": "Sign in with your Contact Energy account.",
         "data": {
-          "email": "Email Address",
+          "email": "Email",
           "password": "Password",
-          "usage_days": "Historical Data (days)",
-          "peak_rate": "Peak Rate Override ($/kWh)",
-          "offpeak_rate": "Off-Peak Rate Override ($/kWh)"
+          "usage_days": "Usage window (days)",
+          "peak_rate": "Peak rate override",
+          "offpeak_rate": "Off-peak rate override"
         },
         "data_description": {
-          "email": "Your Contact Energy account email",
-          "password": "Your Contact Energy account password",
-          "usage_days": "Number of days to fetch (1-30)",
-          "peak_rate": "Leave empty to auto-detect from bill",
-          "offpeak_rate": "Leave empty to auto-detect from bill"
+          "email": "The email address you use to sign in to Contact Energy.",
+          "password": "Your Contact Energy password.",
+          "usage_days": "How many recent days to fetch on each update (1-30).",
+          "peak_rate": "NZD per kWh. Leave empty to use the rate from your bill.",
+          "offpeak_rate": "NZD per kWh. Leave empty to use the rate from your bill."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to Contact Energy again",
+        "description": "Contact Energy rejected the saved password for {email}. Enter your current password.",
+        "data": {
+          "password": "Password"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to Contact Energy API",
-      "invalid_auth": "Invalid email or password",
-      "unknown": "Unexpected error occurred"
+      "cannot_connect": "Couldn't reach Contact Energy. Try again in a few minutes.",
+      "invalid_auth": "Contact Energy didn't accept that email and password.",
+      "unknown": "Unexpected error. Check the Home Assistant logs for details."
     },
     "abort": {
-      "already_configured": "This account is already configured"
+      "already_configured": "This Contact Energy account is already set up.",
+      "reauth_successful": "Signed in again. Contact Energy will reload with the new password."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Contact Energy options",
+        "data": {
+          "usage_days": "Usage window (days)",
+          "peak_rate": "Peak rate override",
+          "offpeak_rate": "Off-peak rate override"
+        },
+        "data_description": {
+          "usage_days": "How many recent days to fetch on each update (1-30).",
+          "peak_rate": "NZD per kWh. Leave empty to use the rate from your bill.",
+          "offpeak_rate": "NZD per kWh. Leave empty to use the rate from your bill."
+        }
+      }
+    }
+  },
+  "services": {
+    "import_historical_data": {
+      "name": "Import historical data",
+      "description": "Fetches past usage from Contact Energy and adds it to the Energy Dashboard statistics.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "The Contact Energy account to use. Only needed when more than one is set up."
+        },
+        "days": {
+          "name": "Days",
+          "description": "How many days back to import (1-365)."
+        },
+        "clear_existing": {
+          "name": "Clear existing data",
+          "description": "Delete all Contact Energy statistics before importing. Use this to repair a broken Energy Dashboard history."
+        },
+        "confirm_clear": {
+          "name": "Confirm clear",
+          "description": "Type yes to confirm deleting existing statistics. Only used when Clear existing data is on."
+        }
+      }
+    },
+    "export_historical_data": {
+      "name": "Export historical data",
+      "description": "Saves past hourly usage to contact_energy_export.csv in your configuration folder.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "The Contact Energy account to use. Only needed when more than one is set up."
+        },
+        "days": {
+          "name": "Days",
+          "description": "How many days back to export (1-365)."
+        }
+      }
     }
   }
 }

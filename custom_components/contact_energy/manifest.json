@@ -1,17 +1,24 @@
 {
 	"domain": "contact_energy",
 	"name": "Contact Energy",
+	"categories": [
+		"energy.energy_prices",
+		"energy.meters_monitoring"
+	],
 	"codeowners": [
 		"@garethcheyne"
 	],
 	"config_flow": true,
+	"connectivity": [
+		"cloud"
+	],
 	"dependencies": [
 		"recorder"
 	],
 	"documentation": "https://github.com/garethcheyne/ha-contact-energy",
+	"integration_type": "service",
 	"iot_class": "cloud_polling",
 	"issue_tracker": "https://github.com/garethcheyne/ha-contact-energy/issues",
 	"requirements": [],
-	"version": "2026.09.16.02",
-	"icon": "mdi:lightning-bolt"
+	"version": "2026.11.16.01"
 }

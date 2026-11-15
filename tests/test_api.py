@@ -16,7 +16,11 @@ import requests_mock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components" / "contact_energy"))
 
-from api import ContactEnergyApi  # noqa: E402
+from api import (  # noqa: E402
+    ContactEnergyApi,
+    ContactEnergyAuthError,
+    ContactEnergyConnectionError,
+)
 
 BASE = "https://api.contact-digital-prod.net"
 
@@ -114,9 +118,38 @@ class TestLogin:
             m.post(f"{BASE}/login/v2", exc=requests.exceptions.ConnectionError)
             assert api.login() is False
 
+    @pytest.mark.parametrize("status", [400, 401])
+    def test_authenticate_rejected_credentials_raise_auth_error(self, api, status):
+        with requests_mock.Mocker() as m:
+            m.post(f"{BASE}/login/v2", status_code=status, text="invalid credentials")
+            with pytest.raises(ContactEnergyAuthError):
+                api.authenticate()
+
+    def test_authenticate_network_error_raises_connection_error(self, api):
+        """Network trouble must not be reported as a wrong password."""
+        with requests_mock.Mocker() as m:
+            m.post(f"{BASE}/login/v2", exc=requests.exceptions.ConnectionError)
+            with pytest.raises(ContactEnergyConnectionError):
+                api.authenticate()
+
+    def test_authenticate_server_error_raises_connection_error(self, api):
+        with requests_mock.Mocker() as m:
+            m.post(f"{BASE}/login/v2", status_code=503, text="maintenance")
+            with pytest.raises(ContactEnergyConnectionError):
+                api.authenticate()
+
+    def test_authenticate_fails_when_accounts_cannot_be_loaded(self, api):
+        with requests_mock.Mocker() as m:
+            _login_ok(m)
+            m.get(f"{BASE}/customer/v2?fetchAccounts=true", status_code=500, text="oops")
+            with pytest.raises(ContactEnergyConnectionError):
+                api.authenticate()
+
     def test_login_does_not_leak_token_to_stdout(self, api, capsys):
-        """Regression test: login() used to print() the full response,
-        including the session token, straight to stdout/HA logs."""
+        """Regression test: login() must not print the session token.
+
+        It used to print() the full response straight to stdout/HA logs.
+        """
         with requests_mock.Mocker() as m:
             _login_ok(m, token="super-secret-token")
             _accounts_ok(m)
@@ -131,9 +164,11 @@ class TestLogin:
 
 
 class TestTokenAutoClearOnAuthFailure:
-    """Regression tests for the 'integration dies forever after token expiry'
-    bug: once the token expires, every sensor's `if not api._api_token`
-    guard needs to see a falsy token again so it re-logs in."""
+    """Regression tests for the 'integration dies forever after token expiry' bug.
+
+    Once the token expires, the stored token must be cleared so the next
+    update logs in again.
+    """
 
     def test_get_usage_clears_token_on_401(self, api):
         api._api_token = "stale-token"

@@ -20,7 +20,9 @@ jobs:
       - name: "Adjust version number"
         shell: "bash"
         run: |
-          yq -i -o json '.version="${{ github.event.release.tag_name }}"' \
+          # Tags look like v2026.11.16.01; the manifest version drops the "v".
+          version="${{ github.event.release.tag_name }}"
+          yq -i -o json ".version=\"${version#v}\"" \
             "${{ github.workspace }}/custom_components/contact_energy/manifest.json"
 
       - name: "ZIP the integration directory"
