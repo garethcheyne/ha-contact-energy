@@ -2,714 +2,276 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime
 import logging
 
-from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
-from homeassistant.components.recorder.statistics import async_add_external_statistics
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CURRENCY, DOMAIN
+from .coordinator import ContactEnergyConfigEntry, ContactEnergyCoordinator
+from .data import NZ_TZ, ContactEnergyData, is_offpeak_hour, parse_bill_date
 
 _LOGGER = logging.getLogger(__name__)
 
-SCAN_INTERVAL = timedelta(hours=3)
+# The coordinator does the polling; entities never poll themselves.
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: ContactEnergyConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Contact Energy sensors from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    api = data["api"]
-    usage_days = data["usage_days"]
-    
-    # Priority: User-configured rates > API-fetched rates > Default values
-    user_peak_rate = entry.data.get("peak_rate")
-    user_offpeak_rate = entry.data.get("offpeak_rate")
-    
-    if user_peak_rate is not None and user_offpeak_rate is not None:
-        # User has explicitly configured rates - use those
-        peak_rate = user_peak_rate
-        offpeak_rate = user_offpeak_rate
-        _LOGGER.info("Using user-configured rates: Peak=$%.4f, Off-peak=$%.4f", peak_rate, offpeak_rate)
-    elif api._bill_details and api._bill_details.get("peak_rate", 0) > 0:
-        # No user override - use API-fetched rates
-        peak_rate = api._bill_details["peak_rate"]
-        offpeak_rate = api._bill_details["offpeak_rate"]
-        _LOGGER.info("Using API-fetched rates: Peak=$%.4f, Off-peak=$%.4f", peak_rate, offpeak_rate)
-    else:
-        # Fallback to defaults
-        peak_rate = 0.30
-        offpeak_rate = 0.15
-        _LOGGER.warning("Using default rates: Peak=$%.4f, Off-peak=$%.4f", peak_rate, offpeak_rate)
-
-    sensors = [
-        ContactEnergyUsageSensor(entry, api, usage_days),
-        ContactEnergyCurrentPriceSensor(entry, api, peak_rate, offpeak_rate),
-        ContactEnergyPeakCostSensor(entry, api, usage_days, peak_rate),
-        ContactEnergyOffPeakCostSensor(entry, api, usage_days, offpeak_rate),
-        ContactEnergyOffPeakPeriodSensor(entry, api),
-        ContactEnergyNextBillDateSensor(entry, api),
-        ContactEnergyNextBillAmountSensor(entry, api),
-    ]
-
-    async_add_entities(sensors, True)
+    coordinator = entry.runtime_data
+    async_add_entities(
+        sensor_class(coordinator)
+        for sensor_class in (
+            ContactEnergyUsageSensor,
+            ContactEnergyCurrentPriceSensor,
+            ContactEnergyPeakCostSensor,
+            ContactEnergyOffPeakCostSensor,
+            ContactEnergyOffPeakPeriodSensor,
+            ContactEnergyNextBillDateSensor,
+            ContactEnergyNextBillAmountSensor,
+        )
+    )
 
 
-class ContactEnergyUsageSensor(SensorEntity):
-    """Contact Energy Usage sensor."""
+class ContactEnergySensor(CoordinatorEntity[ContactEnergyCoordinator], SensorEntity):
+    """Base class for Contact Energy sensors."""
 
     _attr_has_entity_name = True
-    _attr_name = "Energy Usage"
-    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_state_class = SensorStateClass.TOTAL
-    _attr_icon = "mdi:meter-electric"
+    # Unique IDs are "<prefix><entry_id>_<suffix>". Never change these:
+    # Home Assistant tracks entities by unique_id, so a change would orphan
+    # every existing entity and its history.
+    _unique_id_prefix = ""
+    _unique_id_suffix: str
 
-    def __init__(self, entry: ConfigEntry, api, usage_days: int) -> None:
-        """Initialize the sensor."""
-        self._api = api
-        self._usage_days = usage_days
-        self._attr_unique_id = f"{entry.entry_id}_usage"
-        
-        # Build device info with plan details if available
-        plan_name = api._plan_details.get("plan_name", "Smart Meter") if api._plan_details else "Smart Meter"
-        sw_version = api._plan_details.get("plan_id", "Unknown") if api._plan_details else "Unknown"
-        
+    def __init__(self, coordinator: ContactEnergyCoordinator) -> None:
+        """Initialise the sensor."""
+        super().__init__(coordinator)
+        entry_id = coordinator.config_entry.entry_id
+        self._attr_unique_id = f"{self._unique_id_prefix}{entry_id}_{self._unique_id_suffix}"
+        plan = coordinator.data.plan if coordinator.data else {}
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
+            identifiers={(DOMAIN, entry_id)},
             name="Contact Energy",
             manufacturer="Contact Energy",
-            model=plan_name,
-            sw_version=sw_version,
+            model=plan.get("plan_name") or "Smart Meter",
+            sw_version=plan.get("plan_id") or None,
             configuration_url="https://www.contact.co.nz/myaccount",
             entry_type=DeviceEntryType.SERVICE,
         )
-        self._last_total = 0.0
-        self._last_cost = 0.0
+
+    @property
+    def _data(self) -> ContactEnergyData:
+        return self.coordinator.data
+
+
+class ContactEnergyUsageSensor(ContactEnergySensor):
+    """Total usage over the configured window.
+
+    This is a rolling total, so it has no state class: the Energy Dashboard
+    should use the `contact_energy:energy_consumption` and
+    `contact_energy:free_energy_consumption` statistics instead.
+    """
+
+    _attr_name = "Energy Usage"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_icon = "mdi:meter-electric"
+    _unique_id_suffix = "usage"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the total usage in the window."""
+        usage = self._data.usage
+        return round(usage.total_kwh, 2) if usage else None
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return additional state attributes."""
+        """Return account and plan details."""
+        data = self._data
+        usage = data.usage
         attributes = {
-            "account_id": self._api._accountId,
-            "contract_id": self._api._contractId,
-            "last_daily_cost": f"${self._last_cost:.2f}",
+            "account_id": data.account_id,
+            "contract_id": data.contract_id,
+            "last_daily_cost": f"${usage.latest_day_cost:.2f}" if usage else None,
+            "last_daily_usage": round(usage.latest_day_kwh, 2) if usage else None,
+            "last_data_date": usage.latest_day.isoformat() if usage and usage.latest_day else None,
+            "peak_usage": round(usage.peak_kwh, 2) if usage else None,
+            "offpeak_usage": round(usage.offpeak_kwh, 2) if usage else None,
         }
-        
-        # Add plan details if available
-        if self._api._plan_details:
-            plan = self._api._plan_details
-            attributes.update({
-                "plan_name": plan.get("plan_name", "Unknown"),
-                "plan_id": plan.get("plan_id", ""),
-                "campaign": plan.get("campaign", ""),
-                "contract_start_date": plan.get("contract_start", ""),
-                "contract_end_date": plan.get("contract_end", ""),
-                "prompt_payment_discount": plan.get("ppd_percentage", "0%"),
-                "service_type": plan.get("service_type", "Electricity"),
-            })
-        
+        if plan := data.plan:
+            attributes.update(
+                {
+                    "plan_name": plan.get("plan_name", "Unknown"),
+                    "plan_id": plan.get("plan_id", ""),
+                    "campaign": plan.get("campaign", ""),
+                    "contract_start_date": plan.get("contract_start", ""),
+                    "contract_end_date": plan.get("contract_end", ""),
+                    "prompt_payment_discount": plan.get("ppd_percentage", "0%"),
+                    "service_type": plan.get("service_type", "Electricity"),
+                }
+            )
         return attributes
 
-    async def async_update(self) -> None:
-        """Update the sensor."""
-        await self.hass.async_add_executor_job(self._update)
 
-    def _update(self) -> None:
-        """Fetch usage data (runs in executor)."""
-        _LOGGER.debug("Beginning usage update")
+class ContactEnergyCurrentPriceSensor(ContactEnergySensor):
+    """Price per kWh right now, for the Energy Dashboard's "current price" option."""
 
-        # Check API token
-        if not self._api._api_token:
-            _LOGGER.info("Not logged in, attempting login...")
-            if not self._api.login():
-                _LOGGER.error("Failed to login - check credentials")
-                return
-
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-
-        kWhStatistics = []
-        kWhRunningSum = 0.0
-
-        freeKWhStatistics = []
-        freeKWhRunningSum = 0.0
-
-        latest_daily_total = 0.0
-        latest_daily_cost = 0.0
-
-        for i in range(self._usage_days):
-            previous_day = today - timedelta(days=self._usage_days - i)
-            response = self._api.get_usage(
-                str(previous_day.year),
-                str(previous_day.month),
-                str(previous_day.day),
-            )
-
-            if not response or not response[0]:
-                continue
-
-            daily_total = 0.0
-            daily_cost = 0.0
-
-            for point in response:
-                value = point.get("value")
-                if not value:
-                    continue
-
-                value = float(value)
-                daily_total += value
-
-                # Track cost
-                dollar_value = point.get("dollarValue", "0")
-                if dollar_value:
-                    daily_cost += float(dollar_value)
-
-                # Off-peak detection: offpeakValue > 0 means off-peak energy
-                offpeak_value = point.get("offpeakValue", "0")
-                try:
-                    offpeak_float = float(offpeak_value) if offpeak_value else 0.0
-                except (ValueError, TypeError):
-                    offpeak_float = 0.0
-                
-                # Parse timestamp first (before adding to sums)
-                try:
-                    timestamp = datetime.strptime(
-                        point["date"], "%Y-%m-%dT%H:%M:%S.%f%z"
-                    )
-                except (KeyError, ValueError):
-                    _LOGGER.warning("Failed to parse timestamp for data point")
-                    continue
-                
-                if offpeak_float > 0:
-                    # This is off-peak/free energy
-                    freeKWhRunningSum += value
-                    # Add hourly statistics with state only (Home Assistant will calculate sum)
-                    freeKWhStatistics.append(
-                        StatisticData(start=timestamp, state=value)
-                    )
-                else:
-                    # This is peak energy
-                    kWhRunningSum += value
-                    # Add hourly statistics with state only (Home Assistant will calculate sum)
-                    kWhStatistics.append(
-                        StatisticData(start=timestamp, state=value)
-                    )
-
-            # Track latest day with data
-            if daily_total > 0:
-                latest_daily_total = daily_total
-                latest_daily_cost = daily_cost
-
-        # If Contact's API returned no data at all for every day in the window
-        # (temporary lag, token hiccup, rate limiting), don't stomp the last
-        # known good value with a false 0.0 - just skip this update.
-        if not kWhStatistics and not freeKWhStatistics:
-            _LOGGER.warning(
-                "No usage data returned for the last %d day(s); keeping previous value (%s kWh)",
-                self._usage_days,
-                self._attr_native_value,
-            )
-            return
-
-        # Update sensor state with total consumption
-        total_consumption = round(kWhRunningSum + freeKWhRunningSum, 2)
-        self._attr_native_value = total_consumption
-        self._last_total = latest_daily_total
-        self._last_cost = latest_daily_cost
-
-        _LOGGER.info(
-            "Updated Contact Energy: %d hourly statistics, Total: %.2f kWh (%.2f peak + %.2f off-peak)",
-            len(kWhStatistics),
-            total_consumption,
-            kWhRunningSum,
-            freeKWhRunningSum,
-        )
-
-        # Add statistics for energy dashboard
-        if kWhStatistics:
-            kWhMetadata = StatisticMetaData(
-                has_mean=False,
-                has_sum=True,
-                name="Contact Energy",
-                source=DOMAIN,
-                statistic_id=f"{DOMAIN}:energy_consumption",
-                unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            )
-            async_add_external_statistics(self.hass, kWhMetadata, kWhStatistics)
-            _LOGGER.debug(
-                "Added %d statistics for contact_energy:energy_consumption",
-                len(kWhStatistics)
-            )
-
-        if freeKWhStatistics:
-            freeKWhMetadata = StatisticMetaData(
-                has_mean=False,
-                has_sum=True,
-                name="Contact Energy Free",
-                source=DOMAIN,
-                statistic_id=f"{DOMAIN}:free_energy_consumption",
-                unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            )
-            async_add_external_statistics(self.hass, freeKWhMetadata, freeKWhStatistics)
-            _LOGGER.debug(
-                "Added %d statistics for contact_energy:free_energy_consumption",
-                len(freeKWhStatistics)
-            )
-
-
-class ContactEnergyCurrentPriceSensor(SensorEntity):
-    """Contact Energy Current Price sensor for Energy Dashboard."""
-
-    _attr_has_entity_name = True
     _attr_name = "Current Price"
-    _attr_native_unit_of_measurement = "NZD/kWh"
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = f"{CURRENCY}/{UnitOfEnergy.KILO_WATT_HOUR}"
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 4
     _attr_icon = "mdi:cash-clock"
+    _unique_id_suffix = "current_price"
 
-    def __init__(self, entry: ConfigEntry, api, peak_rate: float, offpeak_rate: float) -> None:
-        """Initialize the sensor."""
-        self._api = api
-        self._attr_unique_id = f"{entry.entry_id}_current_price"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Contact Energy",
-            manufacturer="Contact Energy",
-            model="Smart Meter",
-            entry_type=DeviceEntryType.SERVICE,
+    async def async_added_to_hass(self) -> None:
+        """Re-evaluate the price at the top of every hour."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_change(self.hass, self._async_hour_changed, minute=0, second=5)
         )
-        self._peak_rate = peak_rate
-        self._offpeak_rate = offpeak_rate
-        self._is_offpeak = False
-        self._attr_native_value = peak_rate
+
+    @callback
+    def _async_hour_changed(self, now: datetime) -> None:
+        self.async_write_ha_state()
+
+    def _is_offpeak(self) -> bool:
+        usage = self._data.usage
+        window = usage.offpeak_window if usage else None
+        return is_offpeak_hour(datetime.now(NZ_TZ).hour, window)
+
+    @property
+    def native_value(self) -> float:
+        """Return the rate for the current hour."""
+        rates = self._data.rates
+        return round(rates.offpeak if self._is_offpeak() else rates.peak, 4)
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return additional state attributes."""
+        """Return both rates and the current period."""
+        rates = self._data.rates
         return {
-            "peak_rate": f"${self._peak_rate:.4f}/kWh",
-            "offpeak_rate": f"${self._offpeak_rate:.4f}/kWh",
-            "current_period": "off-peak" if self._is_offpeak else "peak",
+            "peak_rate": f"${rates.peak:.4f}/kWh",
+            "offpeak_rate": f"${rates.offpeak:.4f}/kWh",
+            "current_period": "off-peak" if self._is_offpeak() else "peak",
+            "rate_source": rates.source,
         }
 
-    async def async_update(self) -> None:
-        """Update the sensor."""
-        await self.hass.async_add_executor_job(self._update)
 
-    def _update(self) -> None:
-        """Determine current price based on time period."""
-        if not self._api._api_token:
-            if not self._api.login():
-                return
+class ContactEnergyPeakCostSensor(ContactEnergySensor):
+    """Cost of peak usage over the window, at the peak rate."""
 
-        # Get yesterday's data to determine current period
-        yesterday = datetime.now() - timedelta(days=2)
-        response = self._api.get_usage(
-            str(yesterday.year),
-            str(yesterday.month),
-            str(yesterday.day),
-        )
-
-        if not response:
-            # Default to peak rate if no data
-            self._attr_native_value = round(self._peak_rate, 4)
-            return
-
-        current_hour = datetime.now().hour
-
-        # Determine if current time is off-peak (based on yesterday's pattern)
-        for point in response:
-            try:
-                timestamp = datetime.strptime(point["date"], "%Y-%m-%dT%H:%M:%S.%f%z")
-                if timestamp.hour == current_hour:
-                    offpeak_value = point.get("offpeakValue", "0")
-                    offpeak_float = float(offpeak_value) if offpeak_value else 0.0
-                    self._is_offpeak = offpeak_float > 0
-                    break
-            except (KeyError, ValueError):
-                continue
-
-        # Set current price based on time of day
-        if self._is_offpeak:
-            self._attr_native_value = round(self._offpeak_rate, 4)
-        else:
-            self._attr_native_value = round(self._peak_rate, 4)
-
-
-
-class ContactEnergyPeakCostSensor(SensorEntity):
-    """Contact Energy Peak Cost sensor."""
-
-    _attr_has_entity_name = True
     _attr_name = "Peak Cost"
-    _attr_native_unit_of_measurement = "NZD"
+    _attr_native_unit_of_measurement = CURRENCY
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:currency-usd"
+    _unique_id_suffix = "peak_cost"
 
-    def __init__(self, entry: ConfigEntry, api, usage_days: int, peak_rate: float) -> None:
-        """Initialize the sensor."""
-        self._api = api
-        self._usage_days = usage_days
-        self._peak_rate = peak_rate
-        self._attr_unique_id = f"{entry.entry_id}_peak_cost"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Contact Energy",
-            manufacturer="Contact Energy",
-            model="Smart Meter",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-        self._peak_cost = 0.0
-        self._peak_kwh = 0.0
+    @property
+    def native_value(self) -> float | None:
+        """Return the peak cost."""
+        usage = self._data.usage
+        return round(usage.peak_kwh * self._data.rates.peak, 2) if usage else None
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return additional state attributes."""
-        return {
-            "peak_energy": f"{self._peak_kwh:.2f} kWh",
-        }
-
-    async def async_update(self) -> None:
-        """Update the sensor."""
-        await self.hass.async_add_executor_job(self._update)
-
-    def _update(self) -> None:
-        """Fetch peak cost data."""
-        if not self._api._api_token:
-            if not self._api.login():
-                return
-
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        total_peak_cost = 0.0
-        total_peak_kwh = 0.0
-        any_data_found = False
-
-        for i in range(self._usage_days):
-            previous_day = today - timedelta(days=self._usage_days - i)
-            response = self._api.get_usage(
-                str(previous_day.year),
-                str(previous_day.month),
-                str(previous_day.day),
-            )
-
-            if not response:
-                continue
-
-            any_data_found = True
-
-            for point in response:
-                value = point.get("value")
-                if not value:
-                    continue
-
-                offpeak_value = point.get("offpeakValue", "0")
-                try:
-                    offpeak_float = float(offpeak_value) if offpeak_value else 0.0
-                except (ValueError, TypeError):
-                    offpeak_float = 0.0
-
-                # Peak time = when offpeakValue is 0
-                if offpeak_float == 0:
-                    try:
-                        total_peak_kwh += float(value)
-                    except (ValueError, TypeError):
-                        pass
-
-        # If Contact's API returned no data at all for every day in the window,
-        # don't stomp the last known good value with a false 0.0 - just skip.
-        if not any_data_found:
-            _LOGGER.warning(
-                "No usage data returned for the last %d day(s); keeping previous value (%s)",
-                self._usage_days,
-                self._attr_native_value,
-            )
-            return
-
-        # Calculate cost from kWh and configured rate
-        total_peak_cost = total_peak_kwh * self._peak_rate
-        self._attr_native_value = round(total_peak_cost, 2)
-        self._peak_cost = total_peak_cost
-        self._peak_kwh = total_peak_kwh
+        """Return the peak energy used."""
+        usage = self._data.usage
+        return {"peak_energy": f"{usage.peak_kwh:.2f} kWh" if usage else None}
 
 
-class ContactEnergyOffPeakCostSensor(SensorEntity):
-    """Contact Energy Off-Peak Cost sensor."""
+class ContactEnergyOffPeakCostSensor(ContactEnergySensor):
+    """Cost of off-peak usage over the window, at the off-peak rate."""
 
-    _attr_has_entity_name = True
     _attr_name = "Off-Peak Cost"
-    _attr_native_unit_of_measurement = "NZD"
+    _attr_native_unit_of_measurement = CURRENCY
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:currency-usd-off"
+    _unique_id_suffix = "offpeak_cost"
 
-    def __init__(self, entry: ConfigEntry, api, usage_days: int, offpeak_rate: float) -> None:
-        """Initialize the sensor."""
-        self._api = api
-        self._usage_days = usage_days
-        self._offpeak_rate = offpeak_rate
-        self._attr_unique_id = f"{entry.entry_id}_offpeak_cost"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Contact Energy",
-            manufacturer="Contact Energy",
-            model="Smart Meter",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-        self._offpeak_cost = 0.0
-        self._offpeak_kwh = 0.0
+    @property
+    def native_value(self) -> float | None:
+        """Return the off-peak cost."""
+        usage = self._data.usage
+        return round(usage.offpeak_kwh * self._data.rates.offpeak, 2) if usage else None
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return additional state attributes."""
-        return {
-            "offpeak_energy": f"{self._offpeak_kwh:.2f} kWh",
-        }
-
-    async def async_update(self) -> None:
-        """Update the sensor."""
-        await self.hass.async_add_executor_job(self._update)
-
-    def _update(self) -> None:
-        """Fetch off-peak cost data."""
-        if not self._api._api_token:
-            if not self._api.login():
-                return
-
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        total_offpeak_cost = 0.0
-        total_offpeak_kwh = 0.0
-        any_data_found = False
-
-        for i in range(self._usage_days):
-            previous_day = today - timedelta(days=self._usage_days - i)
-            response = self._api.get_usage(
-                str(previous_day.year),
-                str(previous_day.month),
-                str(previous_day.day),
-            )
-
-            if not response:
-                continue
-
-            any_data_found = True
-
-            for point in response:
-                value = point.get("value")
-                if not value:
-                    continue
-
-                offpeak_value = point.get("offpeakValue", "0")
-                try:
-                    offpeak_float = float(offpeak_value) if offpeak_value else 0.0
-                except (ValueError, TypeError):
-                    offpeak_float = 0.0
-
-                # Off-peak time = when offpeakValue > 0
-                if offpeak_float > 0:
-                    try:
-                        total_offpeak_kwh += float(value)
-                    except (ValueError, TypeError):
-                        pass
-
-        # If Contact's API returned no data at all for every day in the window,
-        # don't stomp the last known good value with a false 0.0 - just skip.
-        if not any_data_found:
-            _LOGGER.warning(
-                "No usage data returned for the last %d day(s); keeping previous value (%s)",
-                self._usage_days,
-                self._attr_native_value,
-            )
-            return
-
-        # Calculate cost from kWh and configured rate
-        total_offpeak_cost = total_offpeak_kwh * self._offpeak_rate
-        self._attr_native_value = round(total_offpeak_cost, 2)
-        self._offpeak_cost = total_offpeak_cost
-        self._offpeak_kwh = total_offpeak_kwh
+        """Return the off-peak energy used."""
+        usage = self._data.usage
+        return {"offpeak_energy": f"{usage.offpeak_kwh:.2f} kWh" if usage else None}
 
 
-class ContactEnergyNextBillDateSensor(SensorEntity):
-    """Sensor for next bill due date."""
+class ContactEnergyOffPeakPeriodSensor(ContactEnergySensor):
+    """Off-peak hours detected from recent usage, e.g. "21:00 - 07:00"."""
 
-    _attr_has_entity_name = True
-    _attr_name = "Next Bill Date"
-
-    def __init__(self, entry, api):
-        """Initialize the sensor."""
-        self._api = api
-        # NOTE: keep this exact unique_id string - it predates the has_entity_name
-        # migration and changing it would orphan the entity in existing installs
-        # (HA tracks entities by unique_id, not name).
-        self._attr_unique_id = f"contact_energy_{entry.entry_id}_next_bill_date"
-        self._attr_device_class = SensorDeviceClass.DATE
-        self._attr_icon = "mdi:calendar-clock"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Contact Energy",
-            manufacturer="Contact Energy",
-            model="Smart Meter",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-
-    def update(self):
-        """Update sensor."""
-        if self._api._bill_details and self._api._bill_details.get("next_bill_date"):
-            # Parse date string (ISO format) and extract just the date
-            date_str = self._api._bill_details["next_bill_date"]
-            if date_str:
-                # Expected format: 2026-02-17T00:00:00+13:00
-                try:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                    self._attr_native_value = dt.date()
-                except (ValueError, AttributeError):
-                    # Fallback: try to extract just the date part
-                    self._attr_native_value = date_str[:10] if len(date_str) >= 10 else None
-            else:
-                self._attr_native_value = None
-        else:
-            self._attr_native_value = None
-
-
-class ContactEnergyNextBillAmountSensor(SensorEntity):
-    """Sensor for next bill amount."""
-
-    _attr_has_entity_name = True
-    _attr_name = "Next Bill Amount"
-
-    def __init__(self, entry, api):
-        """Initialize the sensor."""
-        self._api = api
-        # NOTE: keep this exact unique_id string - see comment in
-        # ContactEnergyNextBillDateSensor.__init__ for why.
-        self._attr_unique_id = f"contact_energy_{entry.entry_id}_next_bill_amount"
-        self._attr_device_class = SensorDeviceClass.MONETARY
-        self._attr_native_unit_of_measurement = "NZD"
-        self._attr_icon = "mdi:currency-usd"
-        self._attr_state_class = SensorStateClass.TOTAL
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Contact Energy",
-            manufacturer="Contact Energy",
-            model="Smart Meter",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-
-    def update(self):
-        """Update sensor."""
-        if self._api._bill_details:
-            amount = self._api._bill_details.get("next_bill_amount", 0)
-            self._attr_native_value = round(amount, 2) if amount else 0.0
-        else:
-            self._attr_native_value = 0.0
-
-
-class ContactEnergyOffPeakPeriodSensor(SensorEntity):
-    """Contact Energy Off-Peak Period sensor."""
-
-    _attr_has_entity_name = True
     _attr_name = "Off-Peak Period"
     _attr_icon = "mdi:clock-time-eight-outline"
+    _unique_id_suffix = "offpeak_period"
 
-    def __init__(self, entry: ConfigEntry, api) -> None:
-        """Initialize the sensor."""
-        self._api = api
-        self._attr_unique_id = f"{entry.entry_id}_offpeak_period"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Contact Energy",
-            manufacturer="Contact Energy",
-            model="Smart Meter",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-        self._offpeak_start = None
-        self._offpeak_end = None
+    def _window(self) -> tuple[int, int] | None:
+        usage = self._data.usage
+        return usage.offpeak_window if usage else None
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the off-peak period."""
+        if self._data.usage is None:
+            return None
+        if (window := self._window()) is None:
+            return "No off-peak detected"
+        return f"{window[0]:02d}:00 - {window[1]:02d}:00"
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return additional state attributes."""
-        attrs = {}
-        if self._offpeak_start:
-            attrs["offpeak_start"] = self._offpeak_start
-        if self._offpeak_end:
-            attrs["offpeak_end"] = self._offpeak_end
-        return attrs
+        """Return the start and end of the off-peak period."""
+        if (window := self._window()) is None:
+            return {}
+        return {"offpeak_start": f"{window[0]:02d}:00", "offpeak_end": f"{window[1]:02d}:00"}
 
-    async def async_update(self) -> None:
-        """Update the sensor."""
-        await self.hass.async_add_executor_job(self._update)
 
-    def _update(self) -> None:
-        """Determine off-peak period from recent data."""
-        if not self._api._api_token:
-            if not self._api.login():
-                return
+class ContactEnergyNextBillDateSensor(ContactEnergySensor):
+    """Date of the next bill."""
 
-        # Get yesterday's data to determine off-peak hours
-        yesterday = datetime.now() - timedelta(days=2)  # Use 2 days ago due to data delay
-        response = self._api.get_usage(
-            str(yesterday.year),
-            str(yesterday.month),
-            str(yesterday.day),
-        )
+    _attr_name = "Next Bill Date"
+    _attr_device_class = SensorDeviceClass.DATE
+    _attr_icon = "mdi:calendar-clock"
+    _unique_id_prefix = f"{DOMAIN}_"
+    _unique_id_suffix = "next_bill_date"
 
-        if not response:
-            self._attr_native_value = "Unknown"
-            return
+    @property
+    def native_value(self) -> date | None:
+        """Return the next bill date."""
+        return parse_bill_date(self._data.bill.get("next_bill_date"))
 
-        offpeak_hours = []
-        for point in response:
-            offpeak_value = point.get("offpeakValue", "0")
-            try:
-                offpeak_float = float(offpeak_value) if offpeak_value else 0.0
-            except (ValueError, TypeError):
-                continue
 
-            if offpeak_float > 0:
-                # Extract hour from timestamp
-                try:
-                    timestamp = datetime.strptime(
-                        point["date"], "%Y-%m-%dT%H:%M:%S.%f%z"
-                    )
-                    offpeak_hours.append(timestamp.hour)
-                except (KeyError, ValueError):
-                    continue
+class ContactEnergyNextBillAmountSensor(ContactEnergySensor):
+    """Amount of the next bill."""
 
-        if offpeak_hours:
-            # Find continuous periods
-            offpeak_hours = sorted(set(offpeak_hours))
-            
-            # Detect if it wraps around midnight
-            if 0 in offpeak_hours and 23 in offpeak_hours:
-                # Find the break point
-                for i in range(len(offpeak_hours) - 1):
-                    if offpeak_hours[i + 1] - offpeak_hours[i] > 1:
-                        start_hour = offpeak_hours[i + 1]
-                        end_hour = offpeak_hours[i] + 1
-                        break
-                else:
-                    start_hour = min(offpeak_hours)
-                    end_hour = max(offpeak_hours) + 1
-            else:
-                start_hour = min(offpeak_hours)
-                end_hour = max(offpeak_hours) + 1
+    _attr_name = "Next Bill Amount"
+    _attr_native_unit_of_measurement = CURRENCY
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 2
+    _attr_icon = "mdi:currency-usd"
+    _unique_id_prefix = f"{DOMAIN}_"
+    _unique_id_suffix = "next_bill_amount"
 
-            self._offpeak_start = f"{start_hour:02d}:00"
-            self._offpeak_end = f"{end_hour:02d}:00"
-            self._attr_native_value = f"{self._offpeak_start} - {self._offpeak_end}"
-        else:
-            self._attr_native_value = "No off-peak detected"
+    @property
+    def native_value(self) -> float | None:
+        """Return the next bill amount."""
+        amount = self._data.bill.get("next_bill_amount")
+        return round(amount, 2) if amount is not None else None

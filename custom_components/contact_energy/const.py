@@ -1,33 +1,28 @@
-"""Constants for the Contact Energy sensors."""
+"""Constants for the Contact Energy integration."""
 
-SENSOR_USAGE_NAME = "Contact Energy Usage"
-SENSOR_SOLD_NAME = "Contact Energy Sold"
-SENSOR_PRICES_NAME = "Contact Energy Prices"
+from datetime import timedelta
 
 DOMAIN = "contact_energy"
 
-CONF_PRICES = "prices"
-CONF_USAGE = "usage"
-CONF_SOLD = "sold"
-CONF_SOLD_MEASURE = "sold_measure"
-CONF_SOLD_DAILY = "sold_daily"
 CONF_USAGE_DAYS = "usage_days"
 CONF_PEAK_RATE = "peak_rate"
 CONF_OFFPEAK_RATE = "offpeak_rate"
-CONF_SHOW_HOURLY = "show_hourly"
-CONF_DATE_FORMAT = "date_format"
-CONF_TIME_FORMAT = "time_format"
-CONF_HOURLY_OFFSET_DAYS = "hourly_offset_days"
+CONF_CONFIG_ENTRY_ID = "config_entry_id"
 
-MONITORED_CONDITIONS_DEFAULT = [
-    "is_retail_customer",
-    "current_price",
-    "referral_discount_in_kr",
-    "has_unpaid_invoices",
-    "yearly_savings_in_kr",
-    "timezone",
-    "retail_termination_date",
-    "current_day",
-    "next_day",
-    "current_month",
-]
+DEFAULT_USAGE_DAYS = 10
+DEFAULT_PEAK_RATE = 0.30
+DEFAULT_OFFPEAK_RATE = 0.15
+
+UPDATE_INTERVAL = timedelta(hours=3)
+
+# External statistics shown in the Energy Dashboard. Keep these IDs stable:
+# existing installs already have history recorded under them.
+STATISTIC_PEAK = f"{DOMAIN}:energy_consumption"
+STATISTIC_OFFPEAK = f"{DOMAIN}:free_energy_consumption"
+# Hourly cost as charged by Contact (their `dollarValue`), for the
+# Energy Dashboard's "use an entity tracking the total costs" option.
+STATISTIC_PEAK_COST = f"{DOMAIN}:energy_cost"
+STATISTIC_OFFPEAK_COST = f"{DOMAIN}:free_energy_cost"
+ALL_STATISTIC_IDS = (STATISTIC_PEAK, STATISTIC_OFFPEAK, STATISTIC_PEAK_COST, STATISTIC_OFFPEAK_COST)
+
+CURRENCY = "NZD"

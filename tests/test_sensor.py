@@ -1,230 +1,138 @@
-"""Tests for the sensor aggregation/hold-last-good-value logic.
+"""Tests for the sensor entities (values, state classes and unique IDs)."""
 
-conftest.py stubs the `homeassistant` package and loads sensor.py via
-importlib (see the `sensor_module` fixture there), so this module runs
-the *actual* integration code against fakes rather than a real HA
-instance or the real Contact Energy API.
-"""
-
-from datetime import datetime, timedelta
+from datetime import date, datetime
 
 import pytest
 
 
-class FakeConfigEntry:
-    def __init__(self, entry_id="test_entry"):
+class FakeEntry:
+    def __init__(self, entry_id="abc123"):
         self.entry_id = entry_id
-        self.data = {}
 
 
-class FakeApi:
-    """Stands in for ContactEnergyApi.
-
-    Tests control get_usage() directly instead of mocking HTTP, since
-    HTTP behaviour is already covered in test_api.py.
-    """
-
-    def __init__(self, daily_responses: dict):
-        """Store a {date_key: response} map for get_usage() to return.
-
-        `daily_responses` maps "YYYY-M-D" -> response (list of points,
-        or False/[] to simulate "no data for this day").
-        """
-        self._api_token = "tok"
-        self._plan_details = {}
-        self._bill_details = {}
-        self._accountId = "ACC1"
-        self._contractId = "CON1"
-        self._daily_responses = daily_responses
-        self.login_called = False
-
-    def login(self):
-        self.login_called = True
-        return True
-
-    def get_usage(self, year, month, day):
-        key = f"{year}-{int(month)}-{int(day)}"
-        return self._daily_responses.get(key, False)
+class FakeCoordinator:
+    def __init__(self, data, entry_id="abc123"):
+        self.data = data
+        self.config_entry = FakeEntry(entry_id)
 
 
-def _point(days_ago: int, hour: int, value: float, offpeak: bool, dollar: float = None):
-    day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
-        days=days_ago
+@pytest.fixture
+def make_data(data_module):
+    def _make(points=None, bill=None, peak=0.32, offpeak=0.16, plan=None):
+        usage = data_module.summarise(points or [])
+        return data_module.ContactEnergyData(
+            usage=usage,
+            rates=data_module.Rates(peak=peak, offpeak=offpeak, source="bill"),
+            plan=plan or {},
+            bill=bill or {},
+            account_id="ACC1",
+            contract_id="CON1",
+        )
+
+    return _make
+
+
+def _point(data_module, hour, kwh, offpeak=False):
+    return data_module.UsagePoint(
+        start=datetime(2026, 9, 1, hour, tzinfo=data_module.NZ_TZ), kwh=kwh, cost=0.0, offpeak=offpeak
     )
-    ts = day.replace(hour=hour)
-    return {
-        "date": ts.strftime("%Y-%m-%dT%H:%M:%S.%f+13:00"),
-        "value": str(value),
-        "dollarValue": str(dollar if dollar is not None else value * 0.3),
-        "offpeakValue": "1" if offpeak else "0",
-    }
 
 
-def _responses_for_days_ago(days_ago_list, points_per_day):
-    """Build the {date_key: [points]} map get_usage() will be queried with.
-
-    `days_ago_list` is the list of "days ago" offsets to populate.
-    """
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    out = {}
-    for days_ago in days_ago_list:
-        day = today - timedelta(days=days_ago)
-        key = f"{day.year}-{day.month}-{day.day}"
-        out[key] = points_per_day(days_ago)
-    return out
+ALL_SENSORS = [
+    ("ContactEnergyUsageSensor", "abc123_usage"),
+    ("ContactEnergyCurrentPriceSensor", "abc123_current_price"),
+    ("ContactEnergyPeakCostSensor", "abc123_peak_cost"),
+    ("ContactEnergyOffPeakCostSensor", "abc123_offpeak_cost"),
+    ("ContactEnergyOffPeakPeriodSensor", "abc123_offpeak_period"),
+    ("ContactEnergyNextBillDateSensor", "contact_energy_abc123_next_bill_date"),
+    ("ContactEnergyNextBillAmountSensor", "contact_energy_abc123_next_bill_amount"),
+]
 
 
-class TestUsageSensorHoldsLastGoodValue:
-    """Regression tests for the original bug.
+class TestUniqueIdsAndDevice:
+    """Unique IDs must never change, or existing installs get orphaned entities."""
 
-    An empty fetch window used to silently overwrite a real reading with 0.0.
-    """
+    @pytest.mark.parametrize(("class_name", "unique_id"), ALL_SENSORS)
+    def test_unique_id_and_device_grouping(self, sensor_module, make_data, class_name, unique_id):
+        sensor = getattr(sensor_module, class_name)(FakeCoordinator(make_data()))
+        assert sensor._attr_unique_id == unique_id
+        assert sensor._attr_has_entity_name is True
+        assert sensor._attr_device_info["identifiers"] == {("contact_energy", "abc123")}
 
-    def test_holds_previous_value_when_no_data_returned(self, sensor_module):
-        entry = FakeConfigEntry()
-        api = FakeApi(daily_responses={})  # every day comes back False
-        s = sensor_module.ContactEnergyUsageSensor(entry, api, usage_days=3)
-        s._attr_native_value = 386.18  # simulate a previously-successful reading
+    def test_device_model_comes_from_plan(self, sensor_module, make_data):
+        data = make_data(plan={"plan_name": "Good Nights", "plan_id": "RGN01"})
+        sensor = sensor_module.ContactEnergyUsageSensor(FakeCoordinator(data))
+        assert sensor._attr_device_info["model"] == "Good Nights"
+        assert sensor._attr_device_info["sw_version"] == "RGN01"
 
-        s._update()
 
-        assert s._attr_native_value == 386.18, (
-            "an empty fetch window must not overwrite the last good value"
+class TestStateClasses:
+    """Rolling-window totals must not be TOTAL (HA reads drops as negative usage)."""
+
+    @pytest.mark.parametrize(
+        "class_name",
+        [
+            "ContactEnergyUsageSensor",
+            "ContactEnergyPeakCostSensor",
+            "ContactEnergyOffPeakCostSensor",
+            "ContactEnergyNextBillAmountSensor",
+        ],
+    )
+    def test_no_state_class(self, sensor_module, class_name):
+        assert getattr(getattr(sensor_module, class_name), "_attr_state_class", None) is None
+
+    def test_current_price_is_measurement_without_monetary_class(self, sensor_module):
+        cls = sensor_module.ContactEnergyCurrentPriceSensor
+        assert cls._attr_state_class == "measurement"
+        assert getattr(cls, "_attr_device_class", None) is None
+        assert cls._attr_native_unit_of_measurement == "NZD/kWh"
+
+
+class TestValues:
+    def test_usage_and_costs(self, sensor_module, data_module, make_data):
+        points = [_point(data_module, 8, 2.0), _point(data_module, 22, 5.0, offpeak=True)]
+        coordinator = FakeCoordinator(make_data(points, peak=0.32, offpeak=0.16))
+
+        assert sensor_module.ContactEnergyUsageSensor(coordinator).native_value == 7.0
+        assert sensor_module.ContactEnergyPeakCostSensor(coordinator).native_value == pytest.approx(0.64)
+        assert sensor_module.ContactEnergyOffPeakCostSensor(coordinator).native_value == pytest.approx(0.8)
+        assert sensor_module.ContactEnergyOffPeakPeriodSensor(coordinator).native_value == "22:00 - 23:00"
+
+    def test_values_are_unknown_before_any_usage(self, sensor_module, make_data):
+        coordinator = FakeCoordinator(make_data())
+        assert sensor_module.ContactEnergyUsageSensor(coordinator).native_value is None
+        assert sensor_module.ContactEnergyPeakCostSensor(coordinator).native_value is None
+        assert sensor_module.ContactEnergyOffPeakPeriodSensor(coordinator).native_value is None
+
+    def test_current_price_follows_the_offpeak_window(
+        self, sensor_module, data_module, make_data, monkeypatch
+    ):
+        points = [_point(data_module, h, 1.0, offpeak=h >= 21 or h < 7) for h in range(24)]
+        sensor = sensor_module.ContactEnergyCurrentPriceSensor(
+            FakeCoordinator(make_data(points, peak=0.32, offpeak=0.0))
         )
 
-    def test_updates_value_when_data_is_available(self, sensor_module):
-        entry = FakeConfigEntry()
-        responses = _responses_for_days_ago(
-            [1, 2, 3],
-            lambda d: [_point(d, 8, 1.5, offpeak=False), _point(d, 23, 0.5, offpeak=True)],
+        class FakeDatetime(datetime):
+            hour_now = 12
+
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 2, cls.hour_now, tzinfo=tz)
+
+        monkeypatch.setattr(sensor_module, "datetime", FakeDatetime)
+        assert sensor.native_value == 0.32
+        FakeDatetime.hour_now = 23
+        assert sensor.native_value == 0.0
+        assert sensor.extra_state_attributes["current_period"] == "off-peak"
+
+    def test_bill_sensors(self, sensor_module, make_data):
+        coordinator = FakeCoordinator(
+            make_data(bill={"next_bill_date": "2026-09-17T00:00:00+13:00", "next_bill_amount": 615.674})
         )
-        api = FakeApi(daily_responses=responses)
-        s = sensor_module.ContactEnergyUsageSensor(entry, api, usage_days=3)
-        s._attr_native_value = 0.0
-        s.hass = object()  # normally injected by the HA entity platform
+        assert sensor_module.ContactEnergyNextBillDateSensor(coordinator).native_value == date(2026, 9, 17)
+        assert sensor_module.ContactEnergyNextBillAmountSensor(coordinator).native_value == 615.67
 
-        s._update()
-
-        # 3 days * (1.5 peak + 0.5 offpeak) = 6.0 kWh total
-        assert s._attr_native_value == pytest.approx(6.0)
-
-    def test_partial_window_still_updates_with_whatever_data_exists(self, sensor_module):
-        """Only some days in the window have data (e.g. API lag on the most recent day).
-
-        The sensor should still aggregate what it got rather than
-        treating a partial result as "no data".
-        """
-        entry = FakeConfigEntry()
-        responses = _responses_for_days_ago(
-            [2, 3],  # day "1" (most recent) deliberately missing
-            lambda d: [_point(d, 8, 2.0, offpeak=False)],
-        )
-        api = FakeApi(daily_responses=responses)
-        s = sensor_module.ContactEnergyUsageSensor(entry, api, usage_days=3)
-        s._attr_native_value = 0.0
-        s.hass = object()  # normally injected by the HA entity platform
-
-        s._update()
-
-        assert s._attr_native_value == pytest.approx(4.0)
-
-
-class TestPeakCostSensorHoldsLastGoodValue:
-    def test_holds_previous_value_when_no_data_returned(self, sensor_module):
-        entry = FakeConfigEntry()
-        api = FakeApi(daily_responses={})
-        s = sensor_module.ContactEnergyPeakCostSensor(entry, api, usage_days=3, peak_rate=0.32)
-        s._attr_native_value = 42.50
-
-        s._update()
-
-        assert s._attr_native_value == 42.50
-
-    def test_computes_peak_only_cost(self, sensor_module):
-        entry = FakeConfigEntry()
-        responses = _responses_for_days_ago(
-            [1],
-            lambda d: [
-                _point(d, 8, 2.0, offpeak=False),
-                _point(d, 23, 5.0, offpeak=True),  # must be excluded
-            ],
-        )
-        api = FakeApi(daily_responses=responses)
-        s = sensor_module.ContactEnergyPeakCostSensor(entry, api, usage_days=1, peak_rate=0.32)
-
-        s._update()
-
-        assert s._peak_kwh == pytest.approx(2.0)
-        assert s._attr_native_value == pytest.approx(0.64)
-
-
-class TestOffPeakCostSensorHoldsLastGoodValue:
-    def test_holds_previous_value_when_no_data_returned(self, sensor_module):
-        entry = FakeConfigEntry()
-        api = FakeApi(daily_responses={})
-        s = sensor_module.ContactEnergyOffPeakCostSensor(
-            entry, api, usage_days=3, offpeak_rate=0.16
-        )
-        s._attr_native_value = 12.34
-
-        s._update()
-
-        assert s._attr_native_value == 12.34
-
-    def test_computes_offpeak_only_cost(self, sensor_module):
-        entry = FakeConfigEntry()
-        responses = _responses_for_days_ago(
-            [1],
-            lambda d: [
-                _point(d, 8, 2.0, offpeak=False),  # must be excluded
-                _point(d, 23, 5.0, offpeak=True),
-            ],
-        )
-        api = FakeApi(daily_responses=responses)
-        s = sensor_module.ContactEnergyOffPeakCostSensor(
-            entry, api, usage_days=1, offpeak_rate=0.16
-        )
-
-        s._update()
-
-        assert s._offpeak_kwh == pytest.approx(5.0)
-        assert s._attr_native_value == pytest.approx(0.8)
-
-
-class TestBillSensorsDeviceGrouping:
-    """Regression tests for the entity-grouping fix.
-
-    NextBillDate/Amount used to be missing has_entity_name/device_info,
-    so they showed up outside the "Contact Energy" device tile in the HA
-    UI. The unique_id must stay exactly as it was, or existing installs
-    get an orphaned duplicate entity instead of the fix being picked up
-    in place.
-    """
-
-    def test_next_bill_date_groups_under_contact_energy_device(self, sensor_module):
-        entry = FakeConfigEntry(entry_id="abc123")
-        api = FakeApi(daily_responses={})
-        s = sensor_module.ContactEnergyNextBillDateSensor(entry, api)
-
-        assert s._attr_has_entity_name is True
-        assert s._attr_device_info["identifiers"] == {(sensor_module.DOMAIN, "abc123")}
-        assert s._attr_unique_id == "contact_energy_abc123_next_bill_date"
-
-    def test_next_bill_amount_groups_under_contact_energy_device(self, sensor_module):
-        entry = FakeConfigEntry(entry_id="abc123")
-        api = FakeApi(daily_responses={})
-        s = sensor_module.ContactEnergyNextBillAmountSensor(entry, api)
-
-        assert s._attr_has_entity_name is True
-        assert s._attr_device_info["identifiers"] == {(sensor_module.DOMAIN, "abc123")}
-        assert s._attr_unique_id == "contact_energy_abc123_next_bill_amount"
-
-    def test_next_bill_amount_reads_from_bill_details(self, sensor_module):
-        entry = FakeConfigEntry()
-        api = FakeApi(daily_responses={})
-        api._bill_details = {"next_bill_amount": 615.67}
-        s = sensor_module.ContactEnergyNextBillAmountSensor(entry, api)
-
-        s.update()
-
-        assert s._attr_native_value == 615.67
+    def test_bill_sensors_without_bill(self, sensor_module, make_data):
+        coordinator = FakeCoordinator(make_data())
+        assert sensor_module.ContactEnergyNextBillDateSensor(coordinator).native_value is None
+        assert sensor_module.ContactEnergyNextBillAmountSensor(coordinator).native_value is None

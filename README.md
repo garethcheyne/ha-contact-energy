@@ -26,7 +26,7 @@
 
 This Home Assistant custom integration connects to Contact Energy's API to provide real-time monitoring of your electricity usage and costs. Perfect for New Zealand homes wanting to track their energy consumption through Home Assistant's powerful Energy Dashboard.
 
-**Version:** v2026.09.16.02
+**Version:** v2026.11.16.01
 
 > **Attribution:** This is a fork of the original [ha-contact-energy](https://github.com/codyc1515/ha-contact-energy) integration by [@codyc1515](https://github.com/codyc1515). Credit to them for the original implementation.
 
@@ -46,266 +46,107 @@ This Home Assistant custom integration connects to Contact Energy's API to provi
 
 ## 📦 Installation
 
-### Option 1: HACS (Recommended)
+Requires **Home Assistant 2025.11 or newer**.
 
-1. Ensure [HACS](https://hacs.xyz/docs/setup/download) is installed in your Home Assistant instance
-2. Click the button below to add this repository to HACS:
-   
-   [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=garethcheyne&repository=ha-contact-energy&category=integration)
-   
-3. Search for "Contact Energy" in HACS
-4. Click **Download** to install the integration
-5. **Restart Home Assistant**
+### Option 1: Home Assistant Marketplace (recommended)
 
-### Option 2: Manual Installation
+From Home Assistant 2026.11 the Marketplace (which replaced HACS) is built in.
 
-1. Download the latest release from the [releases page](https://github.com/garethcheyne/ha-contact-energy/releases)
-2. Extract the contents
-3. Copy the `custom_components/contact_energy` folder to your Home Assistant's `config/custom_components/` directory
-4. **Restart Home Assistant**
+1. Click the button below to open this repository in your Marketplace (it also works with HACS):
 
----
+   [![Open your Home Assistant instance and open this repository in the Marketplace.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=garethcheyne&repository=ha-contact-energy&category=integration)
 
-## ⚙️ Configuration
+   Or go to **Settings → Marketplace**, open the menu, choose **Custom repositories**, and add `https://github.com/garethcheyne/ha-contact-energy` as an **Integration**.
+2. Install **Contact Energy**.
+3. **Restart Home Assistant**.
 
-3. Search for **"Contact Energy"**
-4. Enter your Contact Energy account credentials:
-   
-   | Field | Description |
-   |-------|-------------|
-   | **Email** | Your Contact Energy account email address |
-   | **Password** | Your Contact Energy account password |
-   | **Usage Days** | Number of days of historical data to fetch (1-30, default: 10) |
+If you are on Home Assistant 2025.11 – 2026.10 with HACS, add the same URL as a HACS custom repository instead.
 
-5. Click **Submit** - your credentials will be validated before saving
-6. The integration will immediately fetch your historical usage data and add it to Home Assistant
+### Option 2: Manual installation
 
-### Legacy YAML Configuration (Deprecated)
-
-> ⚠️ **Note:** YAML configuration is deprecated. Please use the UI configuration method above.
-
-<details>
-<summary>Click to expand YAML configuration</summary>
-
-For older versions, add the following to your `configuration.yaml`:
-
-```yaml
-sensor:
-  - platform: contact_energy
-    email: your-email@example.com
-    password: your-password
-    usage_days: 10  # Optional, default: 10
-```
-
-</details>
+1. Download the latest release from the [releases page](https://github.com/garethcheyne/ha-contact-energy/releases).
+2. Copy the `custom_components/contact_energy` folder into your Home Assistant `config/custom_components/` folder.
+3. **Restart Home Assistant**.
 
 ---
 
 ## ⚙️ Configuration
 
-The integration is configured through Home Assistant's UI:
+1. Go to **Settings → Devices & services → Add integration**.
+2. Search for **Contact Energy**.
+3. Sign in with your Contact Energy email and password. They are checked before anything is saved.
 
-### Configuration Options
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| **Email** | Yes | - | Your Contact Energy account email |
+| **Password** | Yes | - | Your Contact Energy account password |
+| **Usage window (days)** | No | 10 | How many recent days to fetch on each update (1-30) |
+| **Peak rate override** | No | From your bill | NZD/kWh |
+| **Off-peak rate override** | No | From your bill | NZD/kWh (use `0` for free-hours plans) |
 
-| Parameter | Required | Type | Default | Description |
-|-----------|----------|------|---------|-------------|
-| **Email** | Yes | string | - | Your Contact Energy account email |
-| **Password** | Yes | password | - | Your Contact Energy account password |
-| **Usage Days** | No | integer (1-30) | 10 | Number of days of historical data to fetch |
-| **Peak Rate** | No | decimal (0.01-5.0) | Auto-detect | Peak rate override (NZD/kWh) - leave empty to fetch from API |
-| **Off-Peak Rate** | No | decimal (0.0-5.0) | Auto-detect | Off-peak rate override (NZD/kWh) - leave empty to fetch from API |
+You can change the usage window and rate overrides later with **Configure** on the integration. Clear a rate field to go back to the rate on your bill. If Contact stops accepting your saved password, Home Assistant asks you to sign in again.
 
-### Rate Configuration
+YAML configuration is not supported.
 
-The integration supports **three modes** for rate configuration:
+### Rates
 
-1. **API Auto-Detection (Recommended)** - Leave rate fields empty
-   - Fetches rates automatically from your bill API
-   - Updates based on your actual plan pricing
-   - Example: `Peak: $0.327/kWh, Off-Peak: $0.161/kWh`
+Each rate is chosen in this order:
 
-2. **Manual Override** - Enter specific values
-   - Use when you want to override API-detected rates
-   - Useful for custom calculations or testing
-   - Example: `Peak: $0.35/kWh, Off-Peak: $0.20/kWh`
+1. **Your override**, if you entered one.
+2. **The rate on your current bill** (for example peak `$0.327/kWh`, off-peak `$0.161/kWh`).
+3. **Defaults** of `$0.30/kWh` peak and `$0.15/kWh` off-peak, if the bill can't be read.
 
-3. **Default Fallback** - If API fails and no override provided
-   - Peak: $0.30/kWh
-   - Off-Peak: $0.15/kWh
-
-**Priority:** Manual Override > API Auto-Detection > Default Fallback
+The `rate_source` attribute on **Current Price** shows which one is in use.
 
 ---
 
 ## 📊 Sensors and Data
 
-This integration creates **7 sensors** for comprehensive energy monitoring:
+The integration adds one **Contact Energy** device with 7 sensors. Data is fetched every 3 hours, with one request per day of the usage window shared by all sensors.
 
-### Sensor Entities
+| Sensor | Example | Notes |
+|--------|---------|-------|
+| **Energy Usage** | `26.64 kWh` | Total usage over the usage window. Attributes: account and contract IDs, plan details, `last_daily_usage`, `last_daily_cost`, `last_data_date`, `peak_usage`, `offpeak_usage`. |
+| **Current Price** | `0.3270 NZD/kWh` | The rate for the current hour, re-checked at the top of every hour. Attributes: `peak_rate`, `offpeak_rate`, `current_period`, `rate_source`. |
+| **Peak Cost** | `5.11 NZD` | Peak usage in the window × peak rate. |
+| **Off-Peak Cost** | `1.77 NZD` | Off-peak usage in the window × off-peak rate. |
+| **Off-Peak Period** | `21:00 - 07:00` | Off-peak hours (NZ time) detected from your most recent usage. |
+| **Next Bill Date** | `2026-12-17` | |
+| **Next Bill Amount** | `145.32 NZD` | |
 
-#### 1. **Energy Usage Sensor**
-- **Entity ID:** `sensor.contact_energy_usage`
-- **Unit:** kWh
-- **Update Frequency:** Every 3 hours
-- **Description:** Total cumulative energy consumption
-- **Example Value:** `26.64 kWh`
+**Energy Usage**, **Peak Cost** and **Off-Peak Cost** are rolling totals over the usage window, so they rise and fall as days move in and out of it. For that reason they have no state class and aren't offered as Energy Dashboard sources. Use the statistics below for the dashboard.
 
-**Attributes:**
-```yaml
-account_id: "502023369"
-contract_id: "1351884555"
-plan_name: "Good Charge"
-plan_id: "RGCHO00"
-campaign: "Good Charge"
-benefit_group: "Good Charge"
-contract_start: "2025-09-17"
-contract_end: "9999-12-31"
-ppd_percentage: "0%"
-service_type: "Electricity"
-peak_kwh: 15.63
-offpeak_kwh: 11.01
-peak_rate: 0.327
-offpeak_rate: 0.161
-daily_charge: 2.885
-```
+> **Upgrading from an earlier version?** Home Assistant may show a repair saying these sensors no longer have a state class. Choose to delete their old long-term statistics; they were not meaningful.
 
-#### 2. **Current Price Sensor**
-- **Entity ID:** `sensor.contact_energy_current_price`
-- **Unit:** NZD/kWh
-- **Update Frequency:** Real-time (changes based on time of day)
-- **Description:** Current electricity rate (peak or off-peak)
-- **Example Value:** `$0.3270/kWh` (during 7AM-9PM) or `$0.1610/kWh` (during 9PM-7AM)
-- **Use Case:** Energy Dashboard cost tracking
-
-**Attributes:**
-```yaml
-current_period: "Peak (7AM - 9PM)"  # or "Off-Peak (9PM - 7AM)"
-peak_rate: 0.327
-offpeak_rate: 0.161
-rate_source: "API-Fetched"  # or "Manual-Override" or "Default"
-```
-
-#### 3. **Peak Cost Sensor**
-- **Entity ID:** `sensor.contact_energy_peak_cost`
-- **Unit:** NZD
-- **Update Frequency:** Every 3 hours
-- **Description:** Total cost of peak energy consumption
-- **Calculation:** `peak_kwh × peak_rate`
-- **Example Value:** `$5.11 NZD`
-
-**Attributes:**
-```yaml
-peak_kwh: 15.63
-peak_rate: 0.327
-peak_cost: 5.11
-```
-
-#### 4. **Off-Peak Cost Sensor**
-- **Entity ID:** `sensor.contact_energy_offpeak_cost`
-- **Unit:** NZD
-- **Update Frequency:** Every 3 hours
-- **Description:** Total cost of off-peak energy consumption
-- **Calculation:** `offpeak_kwh × offpeak_rate`
-- **Example Value:** `$1.77 NZD`
-
-**Attributes:**
-```yaml
-offpeak_kwh: 11.01
-offpeak_rate: 0.161
-offpeak_cost: 1.77
-```
-
-#### 5. **Off-Peak Period Sensor**
-- **Entity ID:** `sensor.contact_energy_offpeak_period`
-- **Unit:** -
-- **Update Frequency:** On startup
-- **Description:** Time range for off-peak pricing
-- **Example Value:** `21:00 - 07:00` or `9PM - 7AM`
-
-**Attributes:**
-```yaml
-start_time: "21:00"
-end_time: "07:00"
-duration_hours: 10
-```
-
-#### 6. **Next Bill Date Sensor**
-- **Entity ID:** `sensor.contact_energy_next_bill_date`
-- **Unit:** -
-- **Device Class:** Date
-- **Update Frequency:** Every 3 hours
-- **Description:** Next bill due date
-- **Example Value:** `2026-02-17`
-
-**Attributes:**
-```yaml
-billing_start: "2026-01-18"
-billing_end: "2026-02-17"
-```
-
-#### 7. **Next Bill Amount Sensor**
-- **Entity ID:** `sensor.contact_energy_next_bill_amount`
-- **Unit:** NZD
-- **Device Class:** Monetary
-- **Update Frequency:** Every 3 hours
-- **Description:** Estimated next bill amount
-- **Example Value:** `$145.32 NZD`
-
-**Attributes:**
-```yaml
-billing_period: "30 days"
-peak_cost: 95.50
-offpeak_cost: 34.82
-daily_charges: 15.00
-```
+If Contact's API returns no data at all for an update, the sensors keep their last values instead of dropping to zero.
 
 ---
 
 ## 📈 Energy Dashboard Integration
 
-This integration creates **external statistics** that seamlessly integrate with Home Assistant's Energy Dashboard:
+The integration writes hourly **external statistics** for the Energy Dashboard:
 
-### Available Statistics
+| Statistic ID | Name | Contains |
+|--------------|------|----------|
+| `contact_energy:energy_consumption` | Contact Energy | Peak-time usage (kWh) |
+| `contact_energy:free_energy_consumption` | Contact Energy Free | Off-peak / free-hours usage (kWh) |
+| `contact_energy:energy_cost` | Contact Energy Cost | What Contact charged for peak-time usage (NZD) |
+| `contact_energy:free_energy_cost` | Contact Energy Free Cost | What Contact charged for off-peak usage (NZD) |
 
-| Statistic ID | Description | Use Case |
-|--------------|-------------|----------|
-| `contact_energy:energy_consumption` | Total energy consumption with hourly granularity | Track overall energy usage patterns |
-| `contact_energy:peak_consumption` | Peak period consumption only | Monitor daytime usage |
-| `contact_energy:offpeak_consumption` | Off-peak period consumption only | Monitor nighttime/off-peak usage |
+The cost statistics use the cost Contact reports for each hour, so the dashboard shows your actual usage charges rather than an estimate from a flat rate. They don't include the daily fixed charge.
 
-### How to Add to Energy Dashboard
+### Adding them to the Energy Dashboard
 
-1. Navigate to **Settings** → **Dashboards** → **Energy**
-2. Click **Add Consumption** in the Electricity section
-3. Select `sensor.contact_energy_current_price` for **Use an entity with current price**
-4. Optionally add individual statistics:
-   - `contact_energy:energy_consumption` - Total consumption
-   - `contact_energy:peak_consumption` - Peak hours only
-   - `contact_energy:offpeak_consumption` - Off-peak hours only
+1. Go to **Settings → Dashboards → Energy**.
+2. Under **Electricity grid**, choose **Add consumption** and pick **Contact Energy**.
+3. For cost, choose **Use an entity tracking the total costs** and pick **Contact Energy Cost**.
+4. Add **Contact Energy Free** the same way, with **Contact Energy Free Cost** as its cost.
 
-### Hourly Data Structure
+If you prefer estimated costs, choose **Use an entity with current price** and pick the **Current Price** sensor instead.
 
-The integration stores **hourly statistics** with the following data:
+Each hourly row holds that hour's value and a running total (`sum`), which is what the Energy Dashboard reads. Every update rewrites the usage window and carries the running total on from the last stored hour, so re-fetched days don't cause spikes. To fill in costs for earlier months, run the import action below.
 
-```python
-StatisticData(
-    start=datetime(2026, 1, 16, 0, 0),  # Hour start
-    state=1.15,                          # kWh consumed
-    sum=cumulative_total                 # Running total
-)
-```
-
-**Example Hour:**
-```yaml
-timestamp: "2026-01-16T00:00:00+13:00"
-energy: 1.15 kWh
-cost: $0.185 NZD
-period: "Off-Peak"
-rate: $0.161/kWh
-```
-- 🌙 Off-peak indicator
-
-This hourly granularity allows the Energy Dashboard to display detailed consumption patterns throughout the day.
+> **Energy Dashboard empty or showing spikes after upgrading?** Versions up to v2026.09.16.02 wrote statistics without running totals. Run the import action once with `clear_existing: true` (see below) to rebuild the history.
 
 ---
 
@@ -318,79 +159,41 @@ Contact Energy usage data is typically **delayed by 1-2 days**. This is a limita
 
 ### Importing Historical Data
 
-To import historical data directly into Home Assistant's database for the Energy Dashboard:
+Use the `contact_energy.import_historical_data` action (**Developer tools → Actions**) to load older usage into the Energy Dashboard.
 
-**Developer Tools → Services:**
-
-**Standard Import (adds to existing data):**
+**Add history:**
 ```yaml
-service: contact_energy.import_historical_data
+action: contact_energy.import_historical_data
 data:
-  days: 90  # Optional: 1-365 days (default: 90)
+  days: 90  # 1-365, default 90
 ```
 
-**Fresh Import (clears all data first):**
+**Rebuild history from scratch** (deletes all existing Contact Energy statistics first):
 ```yaml
-service: contact_energy.import_historical_data
+action: contact_energy.import_historical_data
 data:
-  days: 90  # Optional: 1-365 days (default: 90)
+  days: 365
   clear_existing: true
-  confirm_clear: "yes"  # Required when clear_existing is true
+  confirm_clear: "yes"  # required with clear_existing
 ```
 
-**What it does:**
-1. Optionally clears all existing statistics (if `clear_existing: true` and confirmed)
-2. Fetches up to 365 days of hourly data from Contact Energy API
-3. Imports directly into Home Assistant's statistics database
-4. Separates peak and off-peak energy into appropriate statistics
-5. Makes data immediately available in the Energy Dashboard
-6. Shows progress logs every 10 days
-
-**Use Cases:**
-- **Backfill Energy Dashboard** - Add more historical context to existing data
-- **Year-over-year comparisons** - Import a full year for trend analysis
-- **Fresh start** - Clear everything and reimport from scratch
-- **Restore data** - After database issues or integration problems
-- **Initial setup** - Start with comprehensive historical baseline
-
-**Note:** Contact Energy data is typically delayed by 1-2 days, so the most recent days may have no data available. This is normal.
-
-### Purging and Reloading Data
-
-⚠️ **Deprecated:** Use `import_historical_data` with `clear_existing: true` instead.
-
-~~If you need to clear all statistics and reimport fresh data (e.g., after changing configuration or fixing issues), you can use the built-in service:~~
-
-~~**Developer Tools → Services:**~~
-```yaml
-# DEPRECATED - Use import_historical_data instead
-# service: contact_energy.purge_and_reload
-# data:
-#   confirm: "yes"
-```
-
-~~This will:
-1. Clear all Contact Energy statistics from the database
-2. Reload the integration
-3. Reimport all historical data based on your `usage_days` setting~~
-
-~~**⚠️ Warning:** This action is destructive and will permanently delete all historical tracking data. You must explicitly confirm by typing "yes" in the confirmation field.~~
+If you have more than one Contact Energy account set up, add `config_entry_id` to choose the account. The action returns the number of hours imported, and reports an error if Contact can't be reached or returns no data.
 
 ### Exporting Historical Data
 
 To export all historical data for analysis or plotting in external tools (Excel, Python, R, etc.):
 
-**Developer Tools → Services:**
+**Developer tools → Actions:**
 ```yaml
-service: contact_energy.export_historical_data
+action: contact_energy.export_historical_data
 data:
-  days: 30  # Optional: number of days to export (default: 30)
+  days: 30  # 1-365, default 30
 ```
 
 This will:
-1. Fetch up to 365 days of historical hourly data from Contact Energy
-2. Export to CSV file: `/config/contact_energy_export.csv`
-3. Log summary statistics (total kWh, peak/off-peak breakdown, total cost)
+1. Fetch up to 365 days of hourly data from Contact Energy
+2. Write it to `/config/contact_energy_export.csv`
+3. Return (and log) a summary: hours, total/peak/off-peak kWh and total cost
 
 **CSV Format:**
 ```csv
@@ -532,7 +335,8 @@ Energy is classified as "free" or off-peak when `offpeakValue` > 0. During peak 
 
 ## 🐛 Known Issues
 
-- **Redundant API calls:** `Energy Usage`, `Peak Cost`, and `Off-Peak Cost` each independently re-fetch the same days of usage data from Contact's API every update cycle, just to compute different aggregates from it. This works correctly but is ~3x more API traffic than necessary, and plausibly makes the integration more exposed to Contact's rate limiting than it needs to be. Consolidating these into a single shared fetch (e.g. a `DataUpdateCoordinator`) is a planned follow-up - tracked as a known limitation, not yet implemented.
+- Contact Energy usage data is usually 1-2 days behind.
+- Off-peak hours are inferred from your recent usage. If the latest day has no off-peak hours, the most recent day that does is used.
 
 Please [report any other issues](https://github.com/garethcheyne/ha-contact-energy/issues) you encounter.
 
@@ -549,7 +353,7 @@ Your support and contributions are welcome! Here's how you can help:
 
 ### Running the tests
 
-The test suite mocks the HTTP layer and a handful of `homeassistant` symbols, so it never hits the real Contact Energy API and doesn't require installing Home Assistant itself:
+The test suite mocks the HTTP layer and the `homeassistant` symbols the integration uses, so it never hits the real Contact Energy API and doesn't require installing Home Assistant itself:
 
 ```bash
 python3 -m venv .venv
@@ -565,6 +369,20 @@ pytest tests/ -v
 ## 📝 Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history. Latest release:
+
+### v2026.11.16.01
+
+**Energy Dashboard, Home Assistant 2026.11 and Marketplace update**
+
+- 📈 **Energy Dashboard fixed:** statistics now include running totals that carry on correctly between updates. Run the import action once with `clear_existing: true` to rebuild old history.
+- 🔧 **Home Assistant 2026.11 ready:** statistics use `mean_type` and `unit_class`, and the options dialog works again.
+- 🔐 **Re-authentication:** a changed password now asks you to sign in again instead of the integration silently failing. Network outages at startup are retried automatically.
+- ⚡ **One shared fetch** per update instead of one per sensor (about 3× fewer API calls).
+- 💵 **Real costs in the Energy Dashboard:** new `contact_energy:energy_cost` and `contact_energy:free_energy_cost` statistics carry what Contact charged for each hour.
+- 💲 **Current Price** now switches at the right hour.
+- 🛒 Marketplace-ready manifest, plus translations for the setup, options and action forms.
+
+---
 
 ### v2026.09.16.02
 

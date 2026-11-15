@@ -1,65 +1,106 @@
-"""Lightweight stand-ins for the handful of `homeassistant` symbols that `sensor.py` imports.
+"""Lightweight stand-ins for the `homeassistant` symbols the integration imports.
 
 We deliberately do NOT install the real `homeassistant` package for these
-tests: it's a huge dependency (and its compiled extras take a very long
-time to build) just to exercise plain data-aggregation logic that happens
-to live inside SensorEntity subclasses. These stubs give sensor.py exactly
-the surface area it touches - nothing more - so the *actual* integration
-code runs unmodified against them.
+tests: it's a huge dependency just to exercise data-aggregation logic. These
+stubs give the integration modules exactly the surface area they touch, so
+the *actual* integration code runs unmodified against them.
 
-If a future change to sensor.py starts using more of the HA API, extend
-these stubs (or switch to pytest-homeassistant-custom-component) rather
-than papering over an ImportError.
+If a future change starts using more of the HA API, extend these stubs (or
+switch to pytest-homeassistant-custom-component) rather than papering over
+an ImportError.
 """
 
-import importlib.util
+import importlib
 import sys
 import types
 from pathlib import Path
+from typing import Generic, TypeVar
 
 import pytest
 
 COMPONENT_DIR = Path(__file__).parent.parent / "custom_components" / "contact_energy"
-# api.py has no relative imports, so it can be loaded as a plain top-level
-# module (test_api.py does this directly).
+# api.py and data.py have no relative imports, so they can also be loaded as
+# plain top-level modules (test_api.py and test_data.py do this).
 sys.path.insert(0, str(COMPONENT_DIR))
+
+PACKAGE = "_contact_energy_test_pkg"
+
+_T = TypeVar("_T")
+
+
+class FakeRecorder:
+    """Records what the integration asks the recorder to do."""
+
+    def __init__(self):
+        self.cleared = []
+        self.blocked = 0
+
+    async def async_block_till_done(self):
+        self.blocked += 1
+
+    async def async_add_executor_job(self, func, *args):
+        return func(*args)
+
+    def async_clear_statistics(self, statistic_ids):
+        self.cleared.append(list(statistic_ids))
+
+
+class FakeStatisticsStore:
+    """Backs the stubbed recorder statistics functions."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.rows = {}  # statistic_id -> list of {"start": ts, "sum": x}
+        self.imports = []  # (metadata, [StatisticData])
+
+    def get_last_statistics(self, hass, number, statistic_id, convert_units, types_):
+        rows = sorted(self.rows.get(statistic_id, []), key=lambda r: r["start"])
+        return {statistic_id: rows[-number:]} if rows else {}
+
+    def statistics_during_period(self, hass, start, end, ids, period, units, types_):
+        out = {}
+        for statistic_id in ids:
+            rows = [
+                r
+                for r in sorted(self.rows.get(statistic_id, []), key=lambda r: r["start"])
+                if start.timestamp() <= r["start"] < end.timestamp()
+            ]
+            if rows:
+                out[statistic_id] = rows
+        return out
+
+    def async_add_external_statistics(self, hass, metadata, stats):
+        self.imports.append((metadata, stats))
+
+
+RECORDER = FakeRecorder()
+STATISTICS = FakeStatisticsStore()
+
+
+def _module(name, **attrs):
+    mod = types.ModuleType(name)
+    mod.__dict__.update(attrs)
+    sys.modules[name] = mod
+    return mod
 
 
 def _install_ha_stubs() -> None:
     if "homeassistant" in sys.modules:
         return  # already stubbed (or the real thing is installed) - leave it alone
 
-    ha = types.ModuleType("homeassistant")
-
-    # homeassistant.core
-    core = types.ModuleType("homeassistant.core")
-
-    class HomeAssistant:  # noqa: D401 - stub
+    class HomeAssistant:
         pass
 
-    core.HomeAssistant = HomeAssistant
+    def callback(func):
+        return func
 
-    # homeassistant.config_entries
-    config_entries = types.ModuleType("homeassistant.config_entries")
-
-    class ConfigEntry:  # noqa: D401 - stub
+    class ConfigEntry(Generic[_T]):
         pass
-
-    config_entries.ConfigEntry = ConfigEntry
-
-    # homeassistant.const
-    const = types.ModuleType("homeassistant.const")
 
     class UnitOfEnergy:
         KILO_WATT_HOUR = "kWh"
-
-    const.UnitOfEnergy = UnitOfEnergy
-
-    # homeassistant.components (namespace package)
-    components = types.ModuleType("homeassistant.components")
-
-    # homeassistant.components.sensor
-    sensor_mod = types.ModuleType("homeassistant.components.sensor")
 
     class SensorDeviceClass:
         ENERGY = "energy"
@@ -71,131 +112,139 @@ def _install_ha_stubs() -> None:
         MEASUREMENT = "measurement"
 
     class SensorEntity:
-        """Bare stub - see the module docstring for why this is a stub.
+        pass
 
-        The tests call `_update()` directly and read `_attr_native_value`
-        off the instance, so none of the real SensorEntity property
-        machinery is needed.
-        """
-
-    sensor_mod.SensorDeviceClass = SensorDeviceClass
-    sensor_mod.SensorStateClass = SensorStateClass
-    sensor_mod.SensorEntity = SensorEntity
-
-    # homeassistant.components.recorder (+ .models, .statistics)
-    recorder = types.ModuleType("homeassistant.components.recorder")
-    recorder_models = types.ModuleType("homeassistant.components.recorder.models")
-
-    class StatisticData:
+    class StatisticData(dict):
         def __init__(self, **kwargs):
-            self.__dict__.update(kwargs)
+            super().__init__(**kwargs)
 
-    class StatisticMetaData:
+    class StatisticMetaData(dict):
         def __init__(self, **kwargs):
-            self.__dict__.update(kwargs)
+            super().__init__(**kwargs)
 
-    recorder_models.StatisticData = StatisticData
-    recorder_models.StatisticMetaData = StatisticMetaData
-
-    recorder_statistics = types.ModuleType("homeassistant.components.recorder.statistics")
-
-    def async_add_external_statistics(hass, metadata, stats):
-        """No-op stub.
-
-        Tests assert on the sensor's own aggregation, not on what gets
-        pushed to the recorder.
-        """
-
-    recorder_statistics.async_add_external_statistics = async_add_external_statistics
-
-    # homeassistant.helpers (+ .device_registry, .entity_platform)
-    helpers = types.ModuleType("homeassistant.helpers")
-    device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+    class StatisticMeanType:
+        NONE = 0
+        ARITHMETIC = 1
+        CIRCULAR = 2
 
     class DeviceEntryType:
         SERVICE = "service"
 
     class DeviceInfo(dict):
-        """Real DeviceInfo is a TypedDict; a dict subclass is enough here."""
-
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
 
-    device_registry.DeviceEntryType = DeviceEntryType
-    device_registry.DeviceInfo = DeviceInfo
-
-    entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
-
-    class AddEntitiesCallback:  # noqa: D401 - stub
+    class AddEntitiesCallback:
         pass
 
-    entity_platform.AddEntitiesCallback = AddEntitiesCallback
+    class DataUpdateCoordinator(Generic[_T]):
+        def __init__(self, hass, logger, *, config_entry=None, name="", update_interval=None):
+            self.hass = hass
+            self.config_entry = config_entry
+            self.name = name
+            self.update_interval = update_interval
+            self.data = None
 
-    # Wire the package hierarchy together and register in sys.modules.
-    ha.core = core
-    ha.config_entries = config_entries
-    ha.const = const
-    ha.components = components
-    components.sensor = sensor_mod
-    components.recorder = recorder
-    recorder.models = recorder_models
-    recorder.statistics = recorder_statistics
-    ha.helpers = helpers
-    helpers.device_registry = device_registry
-    helpers.entity_platform = entity_platform
+    class CoordinatorEntity(Generic[_T]):
+        def __init__(self, coordinator):
+            self.coordinator = coordinator
 
-    modules = {
-        "homeassistant": ha,
-        "homeassistant.core": core,
-        "homeassistant.config_entries": config_entries,
-        "homeassistant.const": const,
-        "homeassistant.components": components,
-        "homeassistant.components.sensor": sensor_mod,
-        "homeassistant.components.recorder": recorder,
-        "homeassistant.components.recorder.models": recorder_models,
-        "homeassistant.components.recorder.statistics": recorder_statistics,
-        "homeassistant.helpers": helpers,
-        "homeassistant.helpers.device_registry": device_registry,
-        "homeassistant.helpers.entity_platform": entity_platform,
-    }
-    sys.modules.update(modules)
+    class UpdateFailed(Exception):
+        pass
+
+    class ConfigEntryAuthFailed(Exception):
+        pass
+
+    class EnergyConverter:
+        UNIT_CLASS = "energy"
+
+    def async_track_time_change(hass, action, **kwargs):
+        return lambda: None
+
+    _module("homeassistant")
+    _module("homeassistant.core", HomeAssistant=HomeAssistant, callback=callback)
+    _module("homeassistant.config_entries", ConfigEntry=ConfigEntry)
+    _module("homeassistant.const", UnitOfEnergy=UnitOfEnergy)
+    _module("homeassistant.exceptions", ConfigEntryAuthFailed=ConfigEntryAuthFailed)
+    _module("homeassistant.components")
+    _module(
+        "homeassistant.components.sensor",
+        SensorDeviceClass=SensorDeviceClass,
+        SensorStateClass=SensorStateClass,
+        SensorEntity=SensorEntity,
+    )
+    _module("homeassistant.components.recorder", get_instance=lambda hass: RECORDER)
+    _module(
+        "homeassistant.components.recorder.models",
+        StatisticData=StatisticData,
+        StatisticMeanType=StatisticMeanType,
+        StatisticMetaData=StatisticMetaData,
+    )
+    _module(
+        "homeassistant.components.recorder.statistics",
+        async_add_external_statistics=STATISTICS.async_add_external_statistics,
+        get_last_statistics=STATISTICS.get_last_statistics,
+        statistics_during_period=STATISTICS.statistics_during_period,
+    )
+    _module("homeassistant.helpers")
+    _module(
+        "homeassistant.helpers.device_registry",
+        DeviceEntryType=DeviceEntryType,
+        DeviceInfo=DeviceInfo,
+    )
+    _module("homeassistant.helpers.entity_platform", AddEntitiesCallback=AddEntitiesCallback)
+    _module("homeassistant.helpers.event", async_track_time_change=async_track_time_change)
+    _module(
+        "homeassistant.helpers.update_coordinator",
+        DataUpdateCoordinator=DataUpdateCoordinator,
+        CoordinatorEntity=CoordinatorEntity,
+        UpdateFailed=UpdateFailed,
+    )
+    _module("homeassistant.util")
+    _module("homeassistant.util.unit_conversion", EnergyConverter=EnergyConverter)
 
 
 _install_ha_stubs()
 
 
-def _load_sensor_module():
-    """Load sensor.py directly via importlib, bypassing the real __init__.py.
+def _load_package():
+    """Make the integration importable as a package without running __init__.py.
 
-    custom_components/contact_energy/__init__.py pulls in a much bigger slice of Home Assistant
-    (voluptuous service schemas, config_validation, recorder service
-    calls) than sensor.py itself needs, purely to register HA services
-    unrelated to what's under test here. Rather than stub all of that
-    too, we give sensor.py's relative `from .const import DOMAIN` a
-    synthetic parent package that only contains `const`.
+    __init__.py wires up config entries and services, which would need far
+    more of Home Assistant stubbed; the modules under test don't need it.
     """
-    package_name = "_contact_energy_test_pkg"
-
-    pkg = types.ModuleType(package_name)
+    pkg = types.ModuleType(PACKAGE)
     pkg.__path__ = [str(COMPONENT_DIR)]
-    sys.modules[package_name] = pkg
+    sys.modules[PACKAGE] = pkg
+    return pkg
 
-    const_spec = importlib.util.spec_from_file_location(
-        f"{package_name}.const", COMPONENT_DIR / "const.py"
-    )
-    const_mod = importlib.util.module_from_spec(const_spec)
-    sys.modules[f"{package_name}.const"] = const_mod
-    const_spec.loader.exec_module(const_mod)
 
-    sensor_spec = importlib.util.spec_from_file_location(
-        f"{package_name}.sensor", COMPONENT_DIR / "sensor.py"
-    )
-    sensor_mod = importlib.util.module_from_spec(sensor_spec)
-    sys.modules[f"{package_name}.sensor"] = sensor_mod
-    sensor_spec.loader.exec_module(sensor_mod)
-    return sensor_mod
+_load_package()
 
 
 @pytest.fixture(scope="session")
 def sensor_module():
-    return _load_sensor_module()
+    return importlib.import_module(f"{PACKAGE}.sensor")
+
+
+@pytest.fixture(scope="session")
+def coordinator_module():
+    return importlib.import_module(f"{PACKAGE}.coordinator")
+
+
+@pytest.fixture(scope="session")
+def data_module():
+    return importlib.import_module(f"{PACKAGE}.data")
+
+
+@pytest.fixture
+def statistics_store():
+    STATISTICS.reset()
+    return STATISTICS
+
+
+@pytest.fixture
+def fake_recorder():
+    RECORDER.cleared.clear()
+    RECORDER.blocked = 0
+    return RECORDER

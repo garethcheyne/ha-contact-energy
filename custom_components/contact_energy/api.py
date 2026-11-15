@@ -7,6 +7,20 @@ import requests
 _LOGGER = logging.getLogger(__name__)
 
 AUTH_ERROR_STATUS_CODES = (401, 403)
+# Status codes the login endpoint uses for a wrong email or password.
+LOGIN_REJECTED_STATUS_CODES = (400, 401)
+
+
+class ContactEnergyError(Exception):
+    """Base error for the Contact Energy API."""
+
+
+class ContactEnergyAuthError(ContactEnergyError):
+    """Contact Energy rejected the credentials."""
+
+
+class ContactEnergyConnectionError(ContactEnergyError):
+    """Contact Energy could not be reached or returned an unexpected response."""
 
 
 class ContactEnergyApi:
@@ -45,66 +59,107 @@ class ContactEnergyApi:
             )
             self._api_token = ""
 
-    def login(self):
-        """Login to the Contact Energy API."""
+    @property
+    def is_logged_in(self) -> bool:
+        """Return True while a session token is held."""
+        return bool(self._api_token)
+
+    @property
+    def account_id(self) -> str:
+        """Return the Contact Energy account ID."""
+        return self._accountId
+
+    @property
+    def contract_id(self) -> str:
+        """Return the electricity contract ID."""
+        return self._contractId
+
+    @property
+    def plan_details(self) -> dict:
+        """Return the most recently fetched plan details."""
+        return self._plan_details
+
+    @property
+    def bill_details(self) -> dict:
+        """Return the most recently fetched bill details."""
+        return self._bill_details
+
+    def authenticate(self) -> None:
+        """Log in and load the account, plan and bill details.
+
+        Raises ContactEnergyAuthError when Contact rejects the credentials
+        and ContactEnergyConnectionError for anything else, so callers can
+        tell "ask the user for a new password" apart from "try again later".
+        """
+        self._api_token = ""
         headers = {"x-api-key": self._api_key_login}
         data = {"username": self._email, "password": self._password}
-        
+
         try:
             response = requests.post(
-                self._url_base + "/login/v2", 
-                json=data, 
+                self._url_base + "/login/v2",
+                json=data,
                 headers=headers,
-                timeout=30
+                timeout=30,
             )
-            
-            if response.status_code == requests.codes.ok:
-                json_result = response.json()
+        except requests.exceptions.RequestException as err:
+            raise ContactEnergyConnectionError(f"Login request failed: {err}") from err
 
-                self._api_token = json_result["token"]
-                self._businessPartner = json_result.get("bp", "")
-                _LOGGER.debug("Logged in successfully")
-                _LOGGER.debug("Business Partner: %s", self._businessPartner)
-                
-                # Get account info after login
-                if self.get_accounts():
-                    # Get plan details
-                    self.get_plan_details()
-                    # Get bill details with rates
-                    self.get_bill_details()
-                    return True
-                return False
-            else:
-                _LOGGER.error(
-                    "Failed to login - check credentials. Status: %s, Response: %s",
-                    response.status_code,
-                    response.text,
-                )
-                return False
-        except requests.exceptions.RequestException as e:
-            _LOGGER.error("Login request failed: %s", e)
+        if response.status_code in LOGIN_REJECTED_STATUS_CODES:
+            raise ContactEnergyAuthError(
+                f"Contact Energy rejected the email or password (HTTP {response.status_code})"
+            )
+        if response.status_code != requests.codes.ok:
+            raise ContactEnergyConnectionError(
+                f"Login failed with HTTP {response.status_code}"
+            )
+
+        try:
+            json_result = response.json()
+            token = json_result["token"]
+        except (ValueError, KeyError, TypeError) as err:
+            raise ContactEnergyConnectionError("Unexpected login response") from err
+
+        self._api_token = token
+        self._businessPartner = json_result.get("bp", "")
+        _LOGGER.debug("Logged in successfully")
+
+        if not self.get_accounts():
+            raise ContactEnergyConnectionError("Could not load account details")
+
+        # Plan and bill details are nice-to-have; failures are logged, not fatal.
+        self.get_plan_details()
+        self.get_bill_details()
+
+    def login(self) -> bool:
+        """Log in, returning True on success (see authenticate() for errors)."""
+        try:
+            self.authenticate()
+        except ContactEnergyError as err:
+            _LOGGER.error("%s", err)
             return False
+        return True
 
     def get_accounts(self):
         """Get account and contract information."""
         headers = {"x-api-key": self._api_key_data, "session": self._api_token}
-        
+
         try:
             response = requests.get(
-                self._url_base + "/customer/v2?fetchAccounts=true", 
+                self._url_base + "/customer/v2?fetchAccounts=true",
                 headers=headers,
                 timeout=30
             )
-            
+
             if response.status_code == requests.codes.ok:
                 data = response.json()
                 _LOGGER.debug("Retrieved accounts")
-                
+
                 # Extract account, contract, and premise IDs
                 self._accountId = data["accounts"][0]["id"]
                 self._contractId = data["accounts"][0]["contracts"][0]["contractId"]
                 self._premiseId = data["accounts"][0]["contracts"][0].get("premiseId", "")
-                
+
                 return True
             else:
                 self._clear_token_on_auth_failure(response, "get_accounts")
@@ -119,20 +174,20 @@ class ContactEnergyApi:
         if not self._accountId:
             _LOGGER.warning("Cannot get plan details without account ID")
             return False
-        
+
         headers = {"x-api-key": self._api_key_data, "session": self._api_token}
-        
+
         try:
             response = requests.get(
                 self._url_base + f"/panel-plans/v2?ba={self._accountId}",
                 headers=headers,
                 timeout=30
             )
-            
+
             if response.status_code == requests.codes.ok:
                 data = response.json()
                 _LOGGER.debug("Retrieved plan details")
-                
+
                 # Extract plan information
                 if data.get("premises") and len(data["premises"]) > 0:
                     premise = data["premises"][0]
@@ -140,7 +195,7 @@ class ContactEnergyApi:
                         service = premise["services"][0]
                         plan = service.get("planDetails", {})
                         contract = service.get("contract", {})
-                        
+
                         self._plan_details = {
                             "plan_name": plan.get("externalPlanDescription", "Unknown"),
                             "plan_id": plan.get("planId", ""),
@@ -155,7 +210,7 @@ class ContactEnergyApi:
                             "service_type": service.get("serviceDescription", "Electricity"),
                         }
                         return True
-                
+
                 _LOGGER.warning("No plan details found in response")
                 return False
             else:
@@ -171,17 +226,17 @@ class ContactEnergyApi:
         if not self._contractId or not self._accountId:
             _LOGGER.error("Cannot get usage without account and contract IDs")
             return False
-        
+
         headers = {"x-api-key": self._api_key_data, "session": self._api_token}
         date_str = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-        
+
         try:
             response = requests.post(
                 f"{self._url_base}/usage/v2/{self._contractId}?ba={self._accountId}&interval=hourly&from={date_str}&to={date_str}",
                 headers=headers,
                 timeout=30
             )
-            
+
             if response.status_code == requests.codes.ok:
                 data = response.json()
                 if not data:
@@ -221,7 +276,7 @@ class ContactEnergyApi:
                 headers=headers,
                 timeout=30
             )
-            
+
             if response.status_code == requests.codes.ok:
                 bill_data = response.json()
 
@@ -229,11 +284,11 @@ class ContactEnergyApi:
                 self._last_bill_response = bill_data
 
                 _LOGGER.debug("Bill API Response: %s", bill_data)
-                
+
                 # Extract rates from VariableCharges
                 variable_charges = bill_data.get("VariableCharges", [])
                 fixed_charges = bill_data.get("FixedCharges", [])
-                
+
                 self._bill_details = {
                     "peak_rate": 0.0,
                     "offpeak_rate": 0.0,
@@ -245,34 +300,34 @@ class ContactEnergyApi:
                     "billing_start": bill_data.get("StartBillingPeriod", ""),
                     "billing_end": bill_data.get("EndBillingPeriod", ""),
                 }
-                
+
                 # Parse variable charges for peak/off-peak rates
                 for charge in variable_charges:
                     description = charge.get("Description", "")
                     price_str = charge.get("Price", "0")
                     currency_type = charge.get("CurrencyType", "cents").lower()
-                    
+
                     try:
                         price = float(price_str)
                     except (ValueError, TypeError):
                         _LOGGER.warning("Failed to parse price: %s", price_str)
                         continue
-                    
+
                     # Convert cents to dollars (e.g., 32.700 cents → $0.327)
                     if currency_type == "cents":
                         price = price / 100.0
                         _LOGGER.debug("Converted %s cents to $%.4f", price_str, price)
-                    
+
                     # Intelligently detect peak vs off-peak from description
                     # Look for time patterns like "9PM - 7AM" or "7AM - 9PM"
                     time_pattern = r'(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))\s*[-–]\s*(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))'
                     match = re.search(time_pattern, description)
-                    
+
                     is_offpeak = False
                     if match:
                         start_time_str = match.group(1).upper().strip()
                         end_time_str = match.group(2).upper().strip()
-                        
+
                         # Parse start and end times to 24-hour format for comparison
                         def parse_time_to_hour(time_str):
                             """Convert time string like '9PM' or '7AM' to 24-hour integer."""
@@ -288,10 +343,10 @@ class ContactEnergyApi:
                             elif 'AM' in time_str and hour == 12:
                                 hour = 0
                             return hour
-                        
+
                         start_hour = parse_time_to_hour(start_time_str)
                         end_hour = parse_time_to_hour(end_time_str)
-                        
+
                         if start_hour is not None and end_hour is not None:
                             # Off-peak typically spans midnight (start > end in 24h format)
                             # e.g., 9PM (21) - 7AM (7): 21 > 7 = off-peak
@@ -309,7 +364,7 @@ class ContactEnergyApi:
                                 # Daytime hours - likely peak
                                 is_offpeak = False
                                 _LOGGER.debug("Detected peak (daytime hours): %s - %s", start_time_str, end_time_str)
-                    
+
                     # Store the rate based on detected type
                     if is_offpeak:
                         self._bill_details["offpeak_rate_cents"] = float(price_str)
@@ -322,7 +377,7 @@ class ContactEnergyApi:
                             self._bill_details["peak_rate_cents"] = float(price_str)
                             self._bill_details["peak_rate"] = round(price, 4)
                             _LOGGER.info("Peak rate: %s cents = $%.4f/kWh (%s)", price_str, price, description)
-                
+
                 # Parse fixed charges for daily charge
                 for charge in fixed_charges:
                     if charge.get("LineItemType") == "ZCODLY":
@@ -333,7 +388,7 @@ class ContactEnergyApi:
                             _LOGGER.info("Daily charge: $%.3f/day", daily_charge)
                         except (ValueError, TypeError):
                             _LOGGER.warning("Failed to parse daily charge: %s", daily_price)
-                
+
                 _LOGGER.info(
                     "Retrieved bill details - Peak: $%.4f/kWh, Off-peak: $%.4f/kWh, Daily: $%.3f",
                     self._bill_details["peak_rate"],
