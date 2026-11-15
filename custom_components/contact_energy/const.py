@@ -19,3 +19,10 @@ UPDATE_INTERVAL = timedelta(hours=3)
 # existing installs already have history recorded under them.
 STATISTIC_PEAK = f"{DOMAIN}:energy_consumption"
 STATISTIC_OFFPEAK = f"{DOMAIN}:free_energy_consumption"
+# Hourly cost as charged by Contact (their `dollarValue`), for the
+# Energy Dashboard's "use an entity tracking the total costs" option.
+STATISTIC_PEAK_COST = f"{DOMAIN}:energy_cost"
+STATISTIC_OFFPEAK_COST = f"{DOMAIN}:free_energy_cost"
+ALL_STATISTIC_IDS = (STATISTIC_PEAK, STATISTIC_OFFPEAK, STATISTIC_PEAK_COST, STATISTIC_OFFPEAK_COST)
+
+CURRENCY = "NZD"

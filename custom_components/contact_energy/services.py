@@ -15,7 +15,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .api import ContactEnergyAuthError, ContactEnergyConnectionError
-from .const import CONF_CONFIG_ENTRY_ID, DOMAIN, STATISTIC_OFFPEAK, STATISTIC_PEAK
+from .const import ALL_STATISTIC_IDS, CONF_CONFIG_ENTRY_ID, DOMAIN
 from .coordinator import ContactEnergyCoordinator, async_write_statistics
 from .data import UsagePoint
 
@@ -116,11 +116,16 @@ def async_setup_services(hass: HomeAssistant) -> None:
                 _LOGGER.info("Clearing existing Contact Energy statistics")
                 # Queued on the recorder ahead of the import below, so the
                 # import always lands after the clear.
-                get_instance(hass).async_clear_statistics([STATISTIC_PEAK, STATISTIC_OFFPEAK])
+                get_instance(hass).async_clear_statistics(list(ALL_STATISTIC_IDS))
             await async_write_statistics(hass, points, reset=clear_existing)
 
         _LOGGER.info("Imported %d hourly statistics into the Energy Dashboard", len(points))
-        return {"hours_imported": len(points), "cleared_existing": clear_existing}
+        return {
+            "hours_imported": len(points),
+            "cleared_existing": clear_existing,
+            "kwh": round(sum(p.kwh for p in points), 3),
+            "cost_nzd": round(sum(p.cost for p in points), 2),
+        }
 
     async def handle_export(call: ServiceCall) -> ServiceResponse:
         coordinator = _get_coordinator(hass, call)

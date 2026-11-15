@@ -128,16 +128,23 @@ The integration writes hourly **external statistics** for the Energy Dashboard:
 
 | Statistic ID | Name | Contains |
 |--------------|------|----------|
-| `contact_energy:energy_consumption` | Contact Energy | Peak-time usage |
-| `contact_energy:free_energy_consumption` | Contact Energy Free | Off-peak / free-hours usage |
+| `contact_energy:energy_consumption` | Contact Energy | Peak-time usage (kWh) |
+| `contact_energy:free_energy_consumption` | Contact Energy Free | Off-peak / free-hours usage (kWh) |
+| `contact_energy:energy_cost` | Contact Energy Cost | What Contact charged for peak-time usage (NZD) |
+| `contact_energy:free_energy_cost` | Contact Energy Free Cost | What Contact charged for off-peak usage (NZD) |
+
+The cost statistics use the cost Contact reports for each hour, so the dashboard shows your actual usage charges rather than an estimate from a flat rate. They don't include the daily fixed charge.
 
 ### Adding them to the Energy Dashboard
 
 1. Go to **Settings → Dashboards → Energy**.
-2. Under **Electricity grid**, choose **Add consumption** and pick **Contact Energy**. For cost, choose **Use an entity with current price** and pick the **Current Price** sensor, or enter your peak rate as a static price.
-3. Add **Contact Energy Free** the same way. For cost, enter your off-peak rate as a static price (`0` for free-hours plans).
+2. Under **Electricity grid**, choose **Add consumption** and pick **Contact Energy**.
+3. For cost, choose **Use an entity tracking the total costs** and pick **Contact Energy Cost**.
+4. Add **Contact Energy Free** the same way, with **Contact Energy Free Cost** as its cost.
 
-Each hourly row holds that hour's kWh and a running total (`sum`), which is what the Energy Dashboard reads. Every update rewrites the usage window and carries the running total on from the last stored hour, so re-fetched days don't cause spikes.
+If you prefer estimated costs, choose **Use an entity with current price** and pick the **Current Price** sensor instead.
+
+Each hourly row holds that hour's value and a running total (`sum`), which is what the Energy Dashboard reads. Every update rewrites the usage window and carries the running total on from the last stored hour, so re-fetched days don't cause spikes. To fill in costs for earlier months, run the import action below.
 
 > **Energy Dashboard empty or showing spikes after upgrading?** Versions up to v2026.09.16.02 wrote statistics without running totals. Run the import action once with `clear_existing: true` (see below) to rebuild the history.
 
@@ -371,6 +378,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history. Latest release:
 - 🔧 **Home Assistant 2026.11 ready:** statistics use `mean_type` and `unit_class`, and the options dialog works again.
 - 🔐 **Re-authentication:** a changed password now asks you to sign in again instead of the integration silently failing. Network outages at startup are retried automatically.
 - ⚡ **One shared fetch** per update instead of one per sensor (about 3× fewer API calls).
+- 💵 **Real costs in the Energy Dashboard:** new `contact_energy:energy_cost` and `contact_energy:free_energy_cost` statistics carry what Contact charged for each hour.
 - 💲 **Current Price** now switches at the right hour.
 - 🛒 Marketplace-ready manifest, plus translations for the setup, options and action forms.
 

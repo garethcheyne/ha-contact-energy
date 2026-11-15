@@ -118,15 +118,38 @@ class TestWriteStatistics:
         points = self._points(data_module, self._start(data_module), [1.0])
         asyncio.run(coordinator_module.async_write_statistics(None, points))
 
+        units = {}
         for metadata, _ in statistics_store.imports:
             assert metadata["mean_type"] == 0
             assert "has_mean" not in metadata
-            assert metadata["unit_class"] == "energy"
             assert metadata["has_sum"] is True
-        assert {m["statistic_id"] for m, _ in statistics_store.imports} == {
-            "contact_energy:energy_consumption",
-            "contact_energy:free_energy_consumption",
+            units[metadata["statistic_id"]] = (metadata["unit_of_measurement"], metadata["unit_class"])
+        assert units == {
+            "contact_energy:energy_consumption": ("kWh", "energy"),
+            "contact_energy:free_energy_consumption": ("kWh", "energy"),
+            "contact_energy:energy_cost": ("NZD", None),
+            "contact_energy:free_energy_cost": ("NZD", None),
         }
+
+    def test_cost_series_carry_contact_dollar_values(
+        self, coordinator_module, data_module, statistics_store, fake_recorder
+    ):
+        """Costs come from Contact's per-hour dollarValue, split peak/off-peak."""
+        start = self._start(data_module)
+        points = [
+            data_module.UsagePoint(start=start, kwh=2.0, cost=0.65, offpeak=False),
+            data_module.UsagePoint(start=start + timedelta(hours=1), kwh=1.0, cost=0.0, offpeak=True),
+            data_module.UsagePoint(start=start + timedelta(hours=2), kwh=1.0, cost=0.33, offpeak=False),
+        ]
+        statistics_store.rows["contact_energy:energy_cost"] = [
+            {"start": (start - timedelta(hours=1)).timestamp(), "sum": 10.0},
+        ]
+
+        asyncio.run(coordinator_module.async_write_statistics(None, points))
+
+        rows = {m["statistic_id"]: r for m, r in statistics_store.imports}
+        assert [r["sum"] for r in rows["contact_energy:energy_cost"]] == pytest.approx([10.65, 10.65, 10.98])
+        assert [r["sum"] for r in rows["contact_energy:free_energy_cost"]] == [0.0, 0.0, 0.0]
 
     def test_first_import_starts_at_zero(
         self, coordinator_module, data_module, statistics_store, fake_recorder

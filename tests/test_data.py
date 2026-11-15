@@ -151,6 +151,12 @@ class TestCumulativeStatistics:
         assert [(r["state"], r["sum"]) for r in peak] == [(1.0, 101.0), (2.0, 103.0), (0.0, 103.0)]
         assert [(r["state"], r["sum"]) for r in offpeak] == [(0.0, 10.0), (0.0, 10.0), (0.5, 10.5)]
 
+    def test_cost_series_uses_cost_field(self):
+        day = date(2026, 9, 1)
+        points = [_point(day, 8, 1.0, cost=0.33), _point(day, 22, 0.5, offpeak=True, cost=0.0)]
+        rows = cumulative_statistics(points, offpeak=False, base_sum=5.0, value="cost")
+        assert [(r["state"], r["sum"]) for r in rows] == [(0.33, 5.33), (0.0, 5.33)]
+
     def test_rows_are_in_time_order(self):
         day = date(2026, 9, 1)
         rows = cumulative_statistics(

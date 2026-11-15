@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import logging
 
@@ -31,10 +32,13 @@ from .const import (
     CONF_USAGE_DAYS,
     DEFAULT_OFFPEAK_RATE,
     DEFAULT_PEAK_RATE,
+    CURRENCY,
     DEFAULT_USAGE_DAYS,
     DOMAIN,
     STATISTIC_OFFPEAK,
+    STATISTIC_OFFPEAK_COST,
     STATISTIC_PEAK,
+    STATISTIC_PEAK_COST,
     UPDATE_INTERVAL,
 )
 from .data import (
@@ -50,10 +54,30 @@ from .data import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# (statistic_id, display name, True for the off-peak series)
+@dataclass(frozen=True)
+class StatisticSeries:
+    """One external statistic written from the hourly usage points."""
+
+    statistic_id: str
+    name: str
+    offpeak: bool
+    value: str  # UsagePoint field: "kwh" or "cost"
+    unit: str
+    unit_class: str | None
+
+
 STATISTIC_SERIES = (
-    (STATISTIC_PEAK, "Contact Energy", False),
-    (STATISTIC_OFFPEAK, "Contact Energy Free", True),
+    StatisticSeries(
+        STATISTIC_PEAK, "Contact Energy", False, "kwh",
+        UnitOfEnergy.KILO_WATT_HOUR, EnergyConverter.UNIT_CLASS,
+    ),
+    StatisticSeries(
+        STATISTIC_OFFPEAK, "Contact Energy Free", True, "kwh",
+        UnitOfEnergy.KILO_WATT_HOUR, EnergyConverter.UNIT_CLASS,
+    ),
+    # Currencies have no unit converter, so unit_class is None.
+    StatisticSeries(STATISTIC_PEAK_COST, "Contact Energy Cost", False, "cost", CURRENCY, None),
+    StatisticSeries(STATISTIC_OFFPEAK_COST, "Contact Energy Free Cost", True, "cost", CURRENCY, None),
 )
 
 type ContactEnergyConfigEntry = ConfigEntry[ContactEnergyCoordinator]
@@ -208,19 +232,21 @@ async def async_write_statistics(
     if not points:
         return
     first = min(p.start for p in points)
-    for statistic_id, name, offpeak in STATISTIC_SERIES:
-        base_sum = 0.0 if reset else await _async_sum_before(hass, statistic_id, first)
-        rows = cumulative_statistics(points, offpeak=offpeak, base_sum=base_sum)
+    for series in STATISTIC_SERIES:
+        base_sum = 0.0 if reset else await _async_sum_before(hass, series.statistic_id, first)
+        rows = cumulative_statistics(
+            points, offpeak=series.offpeak, base_sum=base_sum, value=series.value
+        )
         metadata = StatisticMetaData(
             mean_type=StatisticMeanType.NONE,
             has_sum=True,
-            name=name,
+            name=series.name,
             source=DOMAIN,
-            statistic_id=statistic_id,
-            unit_class=EnergyConverter.UNIT_CLASS,
-            unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            statistic_id=series.statistic_id,
+            unit_class=series.unit_class,
+            unit_of_measurement=series.unit,
         )
         async_add_external_statistics(
             hass, metadata, [StatisticData(**row) for row in rows]
         )
-        _LOGGER.debug("Queued %d hourly statistics for %s", len(rows), statistic_id)
+        _LOGGER.debug("Queued %d hourly statistics for %s", len(rows), series.statistic_id)

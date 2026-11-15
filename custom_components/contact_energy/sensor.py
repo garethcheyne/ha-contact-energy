@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CURRENCY, DOMAIN
 from .coordinator import ContactEnergyConfigEntry, ContactEnergyCoordinator
 from .data import NZ_TZ, ContactEnergyData, is_offpeak_hour, parse_bill_date
 
@@ -25,8 +25,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # The coordinator does the polling; entities never poll themselves.
 PARALLEL_UPDATES = 0
-
-CURRENCY = "NZD"
 
 
 async def async_setup_entry(

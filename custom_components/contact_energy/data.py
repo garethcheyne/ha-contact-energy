@@ -173,20 +173,21 @@ def choose_usage(previous: UsageSummary | None, latest: UsageSummary | None) -> 
 
 
 def cumulative_statistics(
-    points: Iterable[UsagePoint], *, offpeak: bool, base_sum: float
+    points: Iterable[UsagePoint], *, offpeak: bool, base_sum: float, value: str = "kwh"
 ) -> list[dict]:
     """Build hourly statistics rows with a running sum.
 
-    Every hour gets a row in both series (0 kWh when the hour belongs to the
+    `value` is the UsagePoint field to accumulate: "kwh" or "cost".
+    Every hour gets a row in both series (0 when the hour belongs to the
     other series) so each series is continuous and the running sum always
     carries on from the previous hour.
     """
     rows = []
     running = base_sum
     for point in sorted(points, key=lambda p: p.start):
-        kwh = point.kwh if point.offpeak == offpeak else 0.0
-        running += kwh
-        rows.append({"start": point.start, "state": kwh, "sum": running})
+        amount = getattr(point, value) if point.offpeak == offpeak else 0.0
+        running += amount
+        rows.append({"start": point.start, "state": amount, "sum": running})
     return rows
 
 

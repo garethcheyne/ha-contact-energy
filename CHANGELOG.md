@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file.
 
 Requires Home Assistant 2025.11 or newer.
 
+### Added
+
+- **Real costs in the Energy Dashboard.** New hourly statistics `contact_energy:energy_cost` (peak) and `contact_energy:free_energy_cost` (off-peak) carry the cost Contact reports for each hour (`dollarValue`, in NZD). Choose them under **Use an entity tracking the total costs**, and the dashboard shows what Contact actually charged instead of a flat-rate estimate. The daily fixed charge isn't included. The import action backfills them too, and `clear_existing` clears them along with usage.
+
 ### Fixed
 
 - **Energy Dashboard showed no usage.** Statistics were written without the running total (`sum`) that the Energy Dashboard reads. Earlier versions wrote a sum but restarted it at 0 on every update, which caused negative spikes. Each update now carries the sum on from the last hour already stored. **After upgrading, run `contact_energy.import_historical_data` once with `clear_existing: true` and `confirm_clear: "yes"` to rebuild the history.**
@@ -35,7 +39,7 @@ Requires Home Assistant 2025.11 or newer.
 
 ### Development
 
-- Tests cover the new parsing, running-sum and coordinator logic (81 tests).
+- Tests cover the new parsing, running-sum and coordinator logic (83 tests).
 - `ruff` config updated for current ruff; CI uses Python 3.13. The dev container uses Python 3.14 and Home Assistant 2026.11.1. The release workflow strips the `v` from the tag when setting the manifest version.
 
 ---
