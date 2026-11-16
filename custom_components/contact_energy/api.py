@@ -1,7 +1,9 @@
 """Contact Energy API."""
 
+from datetime import date
 import logging
 import re
+
 import requests
 
 _LOGGER = logging.getLogger(__name__)
@@ -222,39 +224,52 @@ class ContactEnergyApi:
             return False
 
     def get_usage(self, year, month, day):
-        """Get usage data for a specific day."""
+        """Get hourly usage for one day."""
+        date_str = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        return self._get_usage(date_str, date_str)
+
+    def get_usage_range(self, start: date, end: date):
+        """Get hourly usage from start to end (inclusive), in one request.
+
+        Returns a list of points, [] when there is no data, or False on error.
+        Callers should check the result really covers the range: if Contact
+        ignores multi-day requests, fall back to get_usage() per day.
+        """
+        return self._get_usage(start.isoformat(), end.isoformat())
+
+    def _get_usage(self, date_from: str, date_to: str):
         if not self._contractId or not self._accountId:
             _LOGGER.error("Cannot get usage without account and contract IDs")
             return False
 
         headers = {"x-api-key": self._api_key_data, "session": self._api_token}
-        date_str = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        label = date_from if date_from == date_to else f"{date_from} to {date_to}"
 
         try:
             response = requests.post(
-                f"{self._url_base}/usage/v2/{self._contractId}?ba={self._accountId}&interval=hourly&from={date_str}&to={date_str}",
+                f"{self._url_base}/usage/v2/{self._contractId}?ba={self._accountId}&interval=hourly&from={date_from}&to={date_to}",
                 headers=headers,
-                timeout=30
+                timeout=60,
             )
 
             if response.status_code == requests.codes.ok:
                 data = response.json()
                 if not data:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         "Fetched usage data for %s, but got nothing back (data may be delayed)",
-                        date_str,
+                        label,
                     )
                 return data if data else []
-            else:
-                self._clear_token_on_auth_failure(response, "get_usage")
-                _LOGGER.error(
-                    "Failed to fetch usage data for %s: %s",
-                    date_str,
-                    response.text
-                )
-                return False
+            self._clear_token_on_auth_failure(response, "get_usage")
+            _LOGGER.warning(
+                "Failed to fetch usage data for %s: %s %s",
+                label,
+                response.status_code,
+                response.text[:200],
+            )
+            return False
         except requests.exceptions.RequestException as e:
-            _LOGGER.error("Get usage request failed for %s: %s", date_str, e)
+            _LOGGER.warning("Get usage request failed for %s: %s", label, e)
             return False
 
     def get_bill_details(self):

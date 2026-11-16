@@ -26,7 +26,7 @@
 
 This Home Assistant custom integration connects to Contact Energy's API to provide real-time monitoring of your electricity usage and costs. Perfect for New Zealand homes wanting to track their energy consumption through Home Assistant's powerful Energy Dashboard.
 
-**Version:** v2026.11.16.02
+**Version:** v2026.11.16.03
 
 ---
 
@@ -81,8 +81,14 @@ If you are on Home Assistant 2025.11 – 2026.10 with HACS, add the same URL as 
 | **Usage window (days)** | No | 10 | How many recent days to fetch on each update (1-30) |
 | **Peak rate override** | No | From your bill | NZD/kWh |
 | **Off-peak rate override** | No | From your bill | NZD/kWh (use `0` for free-hours plans) |
+| **History to import (days)** | No | 90 | Past usage to load into the Energy Dashboard straight after setup, in the background. `0` skips it. |
 
-You can change the usage window and rate overrides later with **Configure** on the integration. Clear a rate field to go back to the rate on your bill. If Contact stops accepting your saved password, Home Assistant asks you to sign in again.
+**Configure** on the integration offers two choices:
+
+- **Settings:** change the usage window and rate overrides. Clear a rate field to go back to the rate on your bill.
+- **Import history:** load more past usage, with a progress bar (see [Importing history](#importing-history)).
+
+If Contact stops accepting your saved password, Home Assistant asks you to sign in again.
 
 YAML configuration is not supported.
 
@@ -100,23 +106,26 @@ The `rate_source` attribute on **Current Price** shows which one is in use.
 
 ## 📊 Sensors and Data
 
-The integration adds one **Contact Energy** device with 9 sensors. Data is fetched every 3 hours, with one request per day of the usage window shared by all sensors.
+The integration adds one **Contact Energy** device with 12 sensors. Data is fetched every 3 hours, with one request per day of the usage window shared by all sensors.
 
 Contact publishes usage **1-2 days late**, so the usage and cost totals cover the most recent days Contact has published, not up to now. The `period_start`, `period_end` and `days` attributes show exactly which days a total covers.
 
 | Sensor | Example | What it is |
 |--------|---------|------------|
 | **Energy Usage** | `271.52 kWh` | Total kWh used over the usage window. Attributes: `period_start`, `period_end`, `days`, `peak_usage`, `offpeak_usage`, `last_daily_usage`, `last_daily_cost`, `last_data_date`, account and plan details. |
-| **Peak Usage Cost** | `50.77 NZD` | What your peak-time usage cost over the usage window. This is a dollar total, not a rate. Uses what Contact charged each hour, or kWh × peak rate if Contact reported no costs. Attributes: `period_start`, `period_end`, `days`, `kwh`, `rate`, `cost_source` (`contact` or `estimated`), `estimated_cost`. |
-| **Off-Peak Usage Cost** | `18.17 NZD` | The same for off-peak usage. |
+| **Peak Usage Cost** | `58.88 NZD` | What your peak-time usage cost over the usage window: kWh × peak rate. A dollar total, not a rate. Attributes: `period_start`, `period_end`, `days`, `kwh`, `rate`. |
+| **Off-Peak Usage Cost** | `19.90 NZD` | The same for off-peak usage. |
+| **Total Cost** | `104.73 NZD` | What Contact charged over the usage window, **including daily charges**. Attributes: `usage_cost`, `daily_charges`, `daily_charge_rate`, `period_start`, `period_end`, `days`. |
 | **Peak Rate** | `0.3270 NZD/kWh` | Your peak rate per kWh. Attribute: `rate_source` (`bill`, `configured` or `default`). |
 | **Off-Peak Rate** | `0.1610 NZD/kWh` | Your off-peak rate per kWh. |
 | **Current Price** | `0.3270 NZD/kWh` | The rate for the current hour (peak or off-peak), re-checked at the top of every hour. |
 | **Off-Peak Period** | `21:00 - 07:00` | Off-peak hours (NZ time) detected from your most recent usage. |
 | **Next Bill Date** | `2026-12-17` | |
 | **Next Bill Amount** | `145.32 NZD` | |
+| **History Stored** (diagnostic) | `424 d` | How many days of hourly history the Energy Dashboard has. Attributes: `oldest`, `newest`. |
+| **History Import** (diagnostic) | `Running` | `Idle`, `Running` or `Failed`. Attributes: `progress` (%), `days_requested`, `last_import`, `error`, and the last result (`last_days_imported`, `last_oldest`, `last_contact_history_starts`, ...). |
 
-**Energy Usage**, **Peak Usage Cost** and **Off-Peak Usage Cost** are rolling totals over the usage window, so they rise and fall as days move in and out of it. **Don't use them as Energy Dashboard sources:** the dashboard would show spikes, negative bars and wrong totals. They have no state class, and if one of them is set up as a dashboard source, Home Assistant shows a warning under **Settings → Repairs** explaining what to change. Use the statistics below for the dashboard.
+**Energy Usage**, **Peak Usage Cost**, **Off-Peak Usage Cost** and **Total Cost** are rolling totals over the usage window, so they rise and fall as days move in and out of it. **Don't use them as Energy Dashboard sources:** the dashboard would show spikes, negative bars and wrong totals. They have no state class, and if one of them is set up as a dashboard source, Home Assistant shows a warning under **Settings → Repairs** explaining what to change. Use the statistics below for the dashboard.
 
 > **Upgrading from an earlier version?** If your Energy Dashboard shows negative bars, it is using the **Energy Usage** sensor. Switch it to the statistics as described below, then run the import action with `clear_existing: true`. Home Assistant may also show a repair saying these sensors no longer have a state class. Choose to delete their old long-term statistics; they were not meaningful.
 
@@ -132,10 +141,10 @@ The integration writes hourly **external statistics** for the Energy Dashboard:
 |--------------|------|----------|
 | `contact_energy:energy_consumption` | Contact Energy | Peak-time usage (kWh) |
 | `contact_energy:free_energy_consumption` | Contact Energy Free | Off-peak / free-hours usage (kWh) |
-| `contact_energy:energy_cost` | Contact Energy Cost | What Contact charged for peak-time usage (NZD) |
-| `contact_energy:free_energy_cost` | Contact Energy Free Cost | What Contact charged for off-peak usage (NZD) |
+| `contact_energy:energy_cost` | Contact Energy Cost | What Contact charged for peak-time hours (NZD) |
+| `contact_energy:free_energy_cost` | Contact Energy Free Cost | What Contact charged for off-peak hours (NZD) |
 
-The cost statistics use the cost Contact reports for each hour, so the dashboard shows your actual usage charges rather than an estimate from a flat rate. They don't include the daily fixed charge.
+The cost statistics use the cost Contact reports for each hour. Contact spreads your **daily fixed charge evenly across the 24 hours**, so each hour's cost is kWh × rate plus 1/24 of the daily charge. The dashboard's cost totals therefore include daily charges and come out close to your bill.
 
 ### Adding them to the Energy Dashboard
 
@@ -159,27 +168,27 @@ Contact Energy usage data is typically **delayed by 1-2 days**. This is a limita
 - ✅ **Expected:** No data for yesterday or today
 - ✅ **Normal:** Data available from 2-3 days ago onwards
 
-### Importing Historical Data
+### Importing history
 
-Use the `contact_energy.import_historical_data` action (**Developer tools → Actions**) to load older usage into the Energy Dashboard.
+New setups import 90 days automatically (the **History to import** field). To load more, or to rebuild a broken history:
 
-**Add history:**
+1. Go to **Settings → Devices & services → Contact Energy → Configure → Import history**.
+2. Choose how many days (up to 1,095), and whether to **Clear existing data first**.
+3. Watch the progress bar. When it finishes, it shows how many days were imported and the date range.
+
+Contact's API sends one day per request, so an import takes about 15 minutes per year of history. It works newest first, stops early once Contact has no older data, and tells you where Contact's history begins. It keeps running if you close the dialog; the **History Import** sensor shows its progress, and **History Stored** shows how much history you have.
+
+The same import is available as an action, for automations:
+
 ```yaml
 action: contact_energy.import_historical_data
 data:
-  days: 90  # 1-365, default 90
-```
-
-**Rebuild history from scratch** (deletes all existing Contact Energy statistics first):
-```yaml
-action: contact_energy.import_historical_data
-data:
-  days: 365
-  clear_existing: true
+  days: 365  # 1-1095, default 90
+  clear_existing: true  # optional: delete existing statistics first
   confirm_clear: "yes"  # required with clear_existing
 ```
 
-If you have more than one Contact Energy account set up, add `config_entry_id` to choose the account. The action returns the number of hours imported, and reports an error if Contact can't be reached or returns no data.
+If you have more than one Contact Energy account set up, add `config_entry_id` to choose the account. The action returns a summary of what was imported.
 
 ### Exporting Historical Data
 

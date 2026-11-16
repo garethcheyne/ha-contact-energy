@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## v2026.11.16.03
+
+### Fixed
+
+- **Contact Energy failed to load after every Home Assistant restart (v2026.11.16.01 and .02).** During startup the integration waited for the recorder to commit statistics, but the recorder doesn't commit until startup has finished. Setup stalled until Home Assistant's 5-minute startup timeout, and the integration was left in a failed state until reloaded by hand. It now skips that wait while Home Assistant is starting, and waits at most 60 seconds otherwise.
+- **Peak/Off-Peak Usage Cost included part of the daily charge.** Contact's hourly cost figures turned out to be kWh × rate *plus* 1/24 of the daily fixed charge. These two sensors are usage only again (kWh × rate). The full figure is on the new **Total Cost** sensor.
+- The README wrongly said the Energy Dashboard cost statistics exclude the daily charge. They include it, spread evenly over each hour, so the dashboard's cost totals come out close to your bill.
+
+### Added
+
+- **History import with a progress bar:** **Configure → Import history** asks how many days (up to 1,095) and whether to clear existing data, then shows a progress bar and a summary. The import runs in the background, so closing the dialog doesn't stop it.
+- **Automatic history import on setup:** a new **History to import** field (default 90 days) loads past usage straight after setup.
+- Imports stop early once Contact has no older data, and report where Contact's history begins.
+- **Total Cost** sensor: what Contact charged over the usage window, with `usage_cost`, `daily_charges` and `daily_charge_rate` attributes.
+- **History Stored** (days of history in the Energy Dashboard, with `oldest` and `newest`) and **History Import** (`Idle` / `Running` / `Failed`, with progress and the last result) diagnostic sensors.
+- Multi-day usage requests are tried once and used if Contact returns the same data as day by day. Contact currently returns only the last day of a range, so the integration fetches day by day (about 15 minutes per year of history).
+
+### Changed
+
+- **Configure** now opens a menu: **Settings** or **Import history**.
+- The import action accepts up to 1,095 days and shares the same background import.
+
+---
+
 ## v2026.11.16.02
 
 ### Added

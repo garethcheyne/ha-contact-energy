@@ -10,6 +10,7 @@ switch to pytest-homeassistant-custom-component) rather than papering over
 an ImportError.
 """
 
+from datetime import UTC, datetime
 import importlib
 import sys
 import types
@@ -102,10 +103,20 @@ def _install_ha_stubs() -> None:
     class UnitOfEnergy:
         KILO_WATT_HOUR = "kWh"
 
+    class UnitOfTime:
+        DAYS = "d"
+
+    class EntityCategory:
+        DIAGNOSTIC = "diagnostic"
+
+    class HomeAssistantError(Exception):
+        pass
+
     class SensorDeviceClass:
         ENERGY = "energy"
         MONETARY = "monetary"
         DATE = "date"
+        ENUM = "enum"
 
     class SensorStateClass:
         TOTAL = "total"
@@ -145,6 +156,9 @@ def _install_ha_stubs() -> None:
             self.update_interval = update_interval
             self.data = None
 
+        def async_update_listeners(self):
+            pass
+
     class CoordinatorEntity(Generic[_T]):
         def __init__(self, coordinator):
             self.coordinator = coordinator
@@ -152,7 +166,7 @@ def _install_ha_stubs() -> None:
     class UpdateFailed(Exception):
         pass
 
-    class ConfigEntryAuthFailed(Exception):
+    class ConfigEntryAuthFailed(HomeAssistantError):
         pass
 
     class EnergyConverter:
@@ -164,8 +178,17 @@ def _install_ha_stubs() -> None:
     _module("homeassistant")
     _module("homeassistant.core", HomeAssistant=HomeAssistant, callback=callback)
     _module("homeassistant.config_entries", ConfigEntry=ConfigEntry)
-    _module("homeassistant.const", UnitOfEnergy=UnitOfEnergy)
-    _module("homeassistant.exceptions", ConfigEntryAuthFailed=ConfigEntryAuthFailed)
+    _module(
+        "homeassistant.const",
+        UnitOfEnergy=UnitOfEnergy,
+        UnitOfTime=UnitOfTime,
+        EntityCategory=EntityCategory,
+    )
+    _module(
+        "homeassistant.exceptions",
+        ConfigEntryAuthFailed=ConfigEntryAuthFailed,
+        HomeAssistantError=HomeAssistantError,
+    )
     _module("homeassistant.components")
     _module(
         "homeassistant.components.sensor",
@@ -200,7 +223,12 @@ def _install_ha_stubs() -> None:
         CoordinatorEntity=CoordinatorEntity,
         UpdateFailed=UpdateFailed,
     )
-    _module("homeassistant.util")
+    dt_mod = _module(
+        "homeassistant.util.dt",
+        utcnow=lambda: datetime.now(UTC),
+        utc_from_timestamp=lambda ts: datetime.fromtimestamp(ts, UTC),
+    )
+    _module("homeassistant.util", dt=dt_mod)
     _module("homeassistant.util.unit_conversion", EnergyConverter=EnergyConverter)
 
 
