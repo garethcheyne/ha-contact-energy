@@ -1,6 +1,9 @@
 {
 	"domain": "contact_energy",
 	"name": "Contact Energy",
+	"after_dependencies": [
+		"energy"
+	],
 	"categories": [
 		"energy.energy_prices",
 		"energy.meters_monitoring"
@@ -20,5 +23,5 @@
 	"iot_class": "cloud_polling",
 	"issue_tracker": "https://github.com/garethcheyne/ha-contact-energy/issues",
 	"requirements": [],
-	"version": "2026.11.16.01"
+	"version": "2026.11.16.02"
 }

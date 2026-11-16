@@ -12,6 +12,7 @@ from homeassistant.helpers.typing import ConfigType
 from .api import ContactEnergyApi
 from .const import DOMAIN
 from .coordinator import ContactEnergyConfigEntry, ContactEnergyCoordinator
+from .energy_check import async_check_energy_sources
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ContactEnergyConfigEntry
 
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await async_check_energy_sources(hass, entry)
     return True
 
 

@@ -91,5 +91,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "rolling_sensor_in_energy": {
+      "title": "Energy Dashboard is using a Contact Energy rolling-total sensor",
+      "description": "Your Energy Dashboard uses {entities}. These sensors show a total for the last few days, so the dashboard gets spikes, negative bars and wrong totals. Contact's data is also 1-2 days behind; the statistics record each hour at the time it was used, while a sensor is recorded when Home Assistant fetches it.\n\nTo fix it, go to **Settings > Dashboards > Energy** and replace them:\n\n- For consumption, use the **Contact Energy** and **Contact Energy Free** statistics.\n- For cost, choose **Use an entity tracking the total costs** and pick **Contact Energy Cost** and **Contact Energy Free Cost**.\n\nThen run the **Import historical data** action once with **Clear existing data** on to rebuild your history. This warning clears the next time Contact Energy reloads."
+    }
   }
 }

@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## v2026.11.16.02
+
+### Added
+
+- **Repairs warning for a misconfigured Energy Dashboard.** If Energy Usage, Peak Usage Cost or Off-Peak Usage Cost is set up as an Energy Dashboard source, Home Assistant now shows a warning under **Settings → Repairs**. It explains how to switch to the Contact Energy statistics. These sensors are rolling totals over the last few days, so as dashboard sources they produce spikes, negative bars and wrong totals.
+- **Peak Rate** and **Off-Peak Rate** sensors (NZD/kWh), with a `rate_source` attribute.
+- Usage and cost sensors have `period_start`, `period_end` and `days` attributes showing which days a total covers. Contact publishes usage 1-2 days late.
+- Brand images: `logo.png` and `logo@2x.png`.
+
+### Changed
+
+- **Peak Cost** and **Off-Peak Cost** are renamed **Peak Usage Cost** and **Off-Peak Usage Cost**, to make clear they are dollar totals for the usage window rather than rates. Existing entity IDs don't change.
+- Those two sensors now show what Contact actually charged for each hour, falling back to kWh × rate when Contact reports no costs. New attributes: `kwh`, `rate`, `cost_source` and `estimated_cost`.
+
+### Fixed
+
+- **The integration icon was a grey "icon not available" placeholder.** `brand/icon.png` and `icon@2x.png` were placeholder images. They are now rendered from the Contact Energy logo.
+
+---
+
 ## v2026.11.16.01
 
 Requires Home Assistant 2025.11 or newer.

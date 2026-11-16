@@ -26,7 +26,7 @@
 
 This Home Assistant custom integration connects to Contact Energy's API to provide real-time monitoring of your electricity usage and costs. Perfect for New Zealand homes wanting to track their energy consumption through Home Assistant's powerful Energy Dashboard.
 
-**Version:** v2026.11.16.01
+**Version:** v2026.11.16.02
 
 ---
 
@@ -100,21 +100,25 @@ The `rate_source` attribute on **Current Price** shows which one is in use.
 
 ## 📊 Sensors and Data
 
-The integration adds one **Contact Energy** device with 7 sensors. Data is fetched every 3 hours, with one request per day of the usage window shared by all sensors.
+The integration adds one **Contact Energy** device with 9 sensors. Data is fetched every 3 hours, with one request per day of the usage window shared by all sensors.
 
-| Sensor | Example | Notes |
-|--------|---------|-------|
-| **Energy Usage** | `26.64 kWh` | Total usage over the usage window. Attributes: account and contract IDs, plan details, `last_daily_usage`, `last_daily_cost`, `last_data_date`, `peak_usage`, `offpeak_usage`. |
-| **Current Price** | `0.3270 NZD/kWh` | The rate for the current hour, re-checked at the top of every hour. Attributes: `peak_rate`, `offpeak_rate`, `current_period`, `rate_source`. |
-| **Peak Cost** | `5.11 NZD` | Peak usage in the window × peak rate. |
-| **Off-Peak Cost** | `1.77 NZD` | Off-peak usage in the window × off-peak rate. |
+Contact publishes usage **1-2 days late**, so the usage and cost totals cover the most recent days Contact has published, not up to now. The `period_start`, `period_end` and `days` attributes show exactly which days a total covers.
+
+| Sensor | Example | What it is |
+|--------|---------|------------|
+| **Energy Usage** | `271.52 kWh` | Total kWh used over the usage window. Attributes: `period_start`, `period_end`, `days`, `peak_usage`, `offpeak_usage`, `last_daily_usage`, `last_daily_cost`, `last_data_date`, account and plan details. |
+| **Peak Usage Cost** | `50.77 NZD` | What your peak-time usage cost over the usage window. This is a dollar total, not a rate. Uses what Contact charged each hour, or kWh × peak rate if Contact reported no costs. Attributes: `period_start`, `period_end`, `days`, `kwh`, `rate`, `cost_source` (`contact` or `estimated`), `estimated_cost`. |
+| **Off-Peak Usage Cost** | `18.17 NZD` | The same for off-peak usage. |
+| **Peak Rate** | `0.3270 NZD/kWh` | Your peak rate per kWh. Attribute: `rate_source` (`bill`, `configured` or `default`). |
+| **Off-Peak Rate** | `0.1610 NZD/kWh` | Your off-peak rate per kWh. |
+| **Current Price** | `0.3270 NZD/kWh` | The rate for the current hour (peak or off-peak), re-checked at the top of every hour. |
 | **Off-Peak Period** | `21:00 - 07:00` | Off-peak hours (NZ time) detected from your most recent usage. |
 | **Next Bill Date** | `2026-12-17` | |
 | **Next Bill Amount** | `145.32 NZD` | |
 
-**Energy Usage**, **Peak Cost** and **Off-Peak Cost** are rolling totals over the usage window, so they rise and fall as days move in and out of it. For that reason they have no state class and aren't offered as Energy Dashboard sources. Use the statistics below for the dashboard.
+**Energy Usage**, **Peak Usage Cost** and **Off-Peak Usage Cost** are rolling totals over the usage window, so they rise and fall as days move in and out of it. **Don't use them as Energy Dashboard sources:** the dashboard would show spikes, negative bars and wrong totals. They have no state class, and if one of them is set up as a dashboard source, Home Assistant shows a warning under **Settings → Repairs** explaining what to change. Use the statistics below for the dashboard.
 
-> **Upgrading from an earlier version?** Home Assistant may show a repair saying these sensors no longer have a state class. Choose to delete their old long-term statistics; they were not meaningful.
+> **Upgrading from an earlier version?** If your Energy Dashboard shows negative bars, it is using the **Energy Usage** sensor. Switch it to the statistics as described below, then run the import action with `clear_existing: true`. Home Assistant may also show a repair saying these sensors no longer have a state class. Choose to delete their old long-term statistics; they were not meaningful.
 
 If Contact's API returns no data at all for an update, the sensors keep their last values instead of dropping to zero.
 

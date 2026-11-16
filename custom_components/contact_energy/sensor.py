@@ -19,7 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CURRENCY, DOMAIN
 from .coordinator import ContactEnergyConfigEntry, ContactEnergyCoordinator
-from .data import NZ_TZ, ContactEnergyData, is_offpeak_hour, parse_bill_date
+from .data import NZ_TZ, ContactEnergyData, UsageSummary, is_offpeak_hour, parse_bill_date
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +41,8 @@ async def async_setup_entry(
             ContactEnergyCurrentPriceSensor,
             ContactEnergyPeakCostSensor,
             ContactEnergyOffPeakCostSensor,
+            ContactEnergyPeakRateSensor,
+            ContactEnergyOffPeakRateSensor,
             ContactEnergyOffPeakPeriodSensor,
             ContactEnergyNextBillDateSensor,
             ContactEnergyNextBillAmountSensor,
@@ -80,7 +82,7 @@ class ContactEnergySensor(CoordinatorEntity[ContactEnergyCoordinator], SensorEnt
 
 
 class ContactEnergyUsageSensor(ContactEnergySensor):
-    """Total usage over the configured window.
+    """Total usage over the usage window (see the period_* attributes).
 
     This is a rolling total, so it has no state class: the Energy Dashboard
     should use the `contact_energy:energy_consumption` and
@@ -105,6 +107,7 @@ class ContactEnergyUsageSensor(ContactEnergySensor):
         data = self._data
         usage = data.usage
         attributes = {
+            **_period_attributes(usage),
             "account_id": data.account_id,
             "contract_id": data.contract_id,
             "last_daily_cost": f"${usage.latest_day_cost:.2f}" if usage else None,
@@ -172,48 +175,122 @@ class ContactEnergyCurrentPriceSensor(ContactEnergySensor):
         }
 
 
-class ContactEnergyPeakCostSensor(ContactEnergySensor):
-    """Cost of peak usage over the window, at the peak rate."""
+def _period_attributes(usage: UsageSummary | None) -> dict:
+    """Describe the days a usage total covers."""
+    if usage is None:
+        return {}
+    return {
+        "period_start": usage.period_start.isoformat() if usage.period_start else None,
+        "period_end": usage.period_end.isoformat() if usage.period_end else None,
+        "days": usage.days,
+    }
 
-    _attr_name = "Peak Cost"
+
+class _UsageCostSensor(ContactEnergySensor):
+    """Total cost of peak or off-peak usage over the usage window.
+
+    Uses what Contact charged for each hour. Falls back to kWh x rate when
+    Contact reported no costs for the window.
+    """
+
     _attr_native_unit_of_measurement = CURRENCY
     _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 2
+    _offpeak: bool
+    _energy_attribute: str
+
+    def _figures(self) -> tuple[float, float, float, float] | None:
+        """Return (kwh, rate, contact_cost, estimated_cost) for this period type."""
+        usage = self._data.usage
+        if usage is None:
+            return None
+        rates = self._data.rates
+        if self._offpeak:
+            kwh, rate, cost = usage.offpeak_kwh, rates.offpeak, usage.offpeak_cost
+        else:
+            kwh, rate, cost = usage.peak_kwh, rates.peak, usage.peak_cost
+        return kwh, rate, cost, kwh * rate
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the total cost for the period."""
+        if (figures := self._figures()) is None:
+            return None
+        _, _, cost, estimated = figures
+        return round(cost if self._data.usage.has_cost else estimated, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Explain the period, usage and rate behind the total."""
+        if (figures := self._figures()) is None:
+            return {}
+        kwh, rate, _, estimated = figures
+        return {
+            **_period_attributes(self._data.usage),
+            "kwh": round(kwh, 2),
+            "rate": f"${rate:.4f}/kWh",
+            "cost_source": "contact" if self._data.usage.has_cost else "estimated",
+            "estimated_cost": round(estimated, 2),
+            # Kept for existing dashboards and templates.
+            self._energy_attribute: f"{kwh:.2f} kWh",
+        }
+
+
+class ContactEnergyPeakCostSensor(_UsageCostSensor):
+    """What peak-time usage cost over the usage window."""
+
+    _attr_name = "Peak Usage Cost"
     _attr_icon = "mdi:currency-usd"
     _unique_id_suffix = "peak_cost"
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the peak cost."""
-        usage = self._data.usage
-        return round(usage.peak_kwh * self._data.rates.peak, 2) if usage else None
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        """Return the peak energy used."""
-        usage = self._data.usage
-        return {"peak_energy": f"{usage.peak_kwh:.2f} kWh" if usage else None}
+    _offpeak = False
+    _energy_attribute = "peak_energy"
 
 
-class ContactEnergyOffPeakCostSensor(ContactEnergySensor):
-    """Cost of off-peak usage over the window, at the off-peak rate."""
+class ContactEnergyOffPeakCostSensor(_UsageCostSensor):
+    """What off-peak usage cost over the usage window."""
 
-    _attr_name = "Off-Peak Cost"
-    _attr_native_unit_of_measurement = CURRENCY
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_name = "Off-Peak Usage Cost"
     _attr_icon = "mdi:currency-usd-off"
     _unique_id_suffix = "offpeak_cost"
+    _offpeak = True
+    _energy_attribute = "offpeak_energy"
+
+
+class _RateSensor(ContactEnergySensor):
+    """A per-kWh rate (from the bill, your override, or the default)."""
+
+    _attr_native_unit_of_measurement = f"{CURRENCY}/{UnitOfEnergy.KILO_WATT_HOUR}"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 4
+    _attr_icon = "mdi:cash"
+    _offpeak: bool
 
     @property
-    def native_value(self) -> float | None:
-        """Return the off-peak cost."""
-        usage = self._data.usage
-        return round(usage.offpeak_kwh * self._data.rates.offpeak, 2) if usage else None
+    def native_value(self) -> float:
+        """Return the rate."""
+        rates = self._data.rates
+        return round(rates.offpeak if self._offpeak else rates.peak, 4)
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return the off-peak energy used."""
-        usage = self._data.usage
-        return {"offpeak_energy": f"{usage.offpeak_kwh:.2f} kWh" if usage else None}
+        """Return where the rate came from."""
+        return {"rate_source": self._data.rates.source}
+
+
+class ContactEnergyPeakRateSensor(_RateSensor):
+    """Peak rate per kWh."""
+
+    _attr_name = "Peak Rate"
+    _unique_id_suffix = "peak_rate"
+    _offpeak = False
+
+
+class ContactEnergyOffPeakRateSensor(_RateSensor):
+    """Off-peak rate per kWh."""
+
+    _attr_name = "Off-Peak Rate"
+    _unique_id_suffix = "offpeak_rate"
+    _offpeak = True
 
 
 class ContactEnergyOffPeakPeriodSensor(ContactEnergySensor):
