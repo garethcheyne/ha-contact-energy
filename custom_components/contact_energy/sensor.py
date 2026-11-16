@@ -10,7 +10,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -41,6 +41,9 @@ async def async_setup_entry(
             ContactEnergyCurrentPriceSensor,
             ContactEnergyPeakCostSensor,
             ContactEnergyOffPeakCostSensor,
+            ContactEnergyTotalCostSensor,
+            ContactEnergyHistoryStoredSensor,
+            ContactEnergyHistoryImportSensor,
             ContactEnergyPeakRateSensor,
             ContactEnergyOffPeakRateSensor,
             ContactEnergyOffPeakPeriodSensor,
@@ -187,10 +190,10 @@ def _period_attributes(usage: UsageSummary | None) -> dict:
 
 
 class _UsageCostSensor(ContactEnergySensor):
-    """Total cost of peak or off-peak usage over the usage window.
+    """Cost of peak or off-peak usage over the usage window: kWh x rate.
 
-    Uses what Contact charged for each hour. Falls back to kWh x rate when
-    Contact reported no costs for the window.
+    Usage charges only. Contact's own hourly figures also include a share of
+    the daily fixed charge; that total is on the Total Cost sensor.
     """
 
     _attr_native_unit_of_measurement = CURRENCY
@@ -199,41 +202,80 @@ class _UsageCostSensor(ContactEnergySensor):
     _offpeak: bool
     _energy_attribute: str
 
-    def _figures(self) -> tuple[float, float, float, float] | None:
-        """Return (kwh, rate, contact_cost, estimated_cost) for this period type."""
+    def _figures(self) -> tuple[float, float] | None:
+        """Return (kwh, rate) for this period type."""
         usage = self._data.usage
         if usage is None:
             return None
         rates = self._data.rates
         if self._offpeak:
-            kwh, rate, cost = usage.offpeak_kwh, rates.offpeak, usage.offpeak_cost
-        else:
-            kwh, rate, cost = usage.peak_kwh, rates.peak, usage.peak_cost
-        return kwh, rate, cost, kwh * rate
+            return usage.offpeak_kwh, rates.offpeak
+        return usage.peak_kwh, rates.peak
 
     @property
     def native_value(self) -> float | None:
-        """Return the total cost for the period."""
+        """Return the usage cost for the period."""
         if (figures := self._figures()) is None:
             return None
-        _, _, cost, estimated = figures
-        return round(cost if self._data.usage.has_cost else estimated, 2)
+        kwh, rate = figures
+        return round(kwh * rate, 2)
 
     @property
     def extra_state_attributes(self) -> dict:
         """Explain the period, usage and rate behind the total."""
         if (figures := self._figures()) is None:
             return {}
-        kwh, rate, _, estimated = figures
+        kwh, rate = figures
         return {
             **_period_attributes(self._data.usage),
             "kwh": round(kwh, 2),
             "rate": f"${rate:.4f}/kWh",
-            "cost_source": "contact" if self._data.usage.has_cost else "estimated",
-            "estimated_cost": round(estimated, 2),
             # Kept for existing dashboards and templates.
             self._energy_attribute: f"{kwh:.2f} kWh",
         }
+
+
+class ContactEnergyTotalCostSensor(ContactEnergySensor):
+    """What Contact charged over the usage window, including daily charges."""
+
+    _attr_name = "Total Cost"
+    _attr_native_unit_of_measurement = CURRENCY
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 2
+    _attr_icon = "mdi:cash-multiple"
+    _unique_id_suffix = "total_cost"
+
+    def _usage_cost(self) -> float:
+        usage, rates = self._data.usage, self._data.rates
+        return usage.peak_kwh * rates.peak + usage.offpeak_kwh * rates.offpeak
+
+    @property
+    def native_value(self) -> float | None:
+        """Return Contact's total, or the usage cost if Contact reported none."""
+        usage = self._data.usage
+        if usage is None:
+            return None
+        if usage.has_cost:
+            return round(usage.peak_cost + usage.offpeak_cost, 2)
+        return round(self._usage_cost(), 2)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Split the total into usage and daily charges."""
+        usage = self._data.usage
+        if usage is None:
+            return {}
+        usage_cost = self._usage_cost()
+        attributes = {
+            **_period_attributes(usage),
+            "usage_cost": round(usage_cost, 2),
+            "cost_source": "contact" if usage.has_cost else "usage only",
+        }
+        if usage.has_cost:
+            attributes["daily_charges"] = round(usage.peak_cost + usage.offpeak_cost - usage_cost, 2)
+        if (daily := self._data.bill.get("daily_charge")) is not None:
+            attributes["daily_charge_rate"] = f"${daily:.3f}/day"
+        return attributes
 
 
 class ContactEnergyPeakCostSensor(_UsageCostSensor):
@@ -319,6 +361,62 @@ class ContactEnergyOffPeakPeriodSensor(ContactEnergySensor):
         if (window := self._window()) is None:
             return {}
         return {"offpeak_start": f"{window[0]:02d}:00", "offpeak_end": f"{window[1]:02d}:00"}
+
+
+class ContactEnergyHistoryStoredSensor(ContactEnergySensor):
+    """How many days of hourly history are stored for the Energy Dashboard."""
+
+    _attr_name = "History Stored"
+    _attr_native_unit_of_measurement = UnitOfTime.DAYS
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:database-clock"
+    _unique_id_suffix = "history_stored"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the number of days from the oldest to the newest stored day."""
+        if (history := self.coordinator.history_range) is None:
+            return None
+        oldest, newest = history
+        return (newest - oldest).days + 1
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return the oldest and newest stored days."""
+        if (history := self.coordinator.history_range) is None:
+            return {}
+        return {"oldest": history[0].isoformat(), "newest": history[1].isoformat()}
+
+
+class ContactEnergyHistoryImportSensor(ContactEnergySensor):
+    """Status of the history import: idle, running (with progress) or failed."""
+
+    _attr_name = "History Import"
+    _attr_translation_key = "history_import"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["idle", "running", "failed"]
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:database-import"
+    _unique_id_suffix = "history_import"
+
+    @property
+    def native_value(self) -> str:
+        """Return the import status."""
+        return self.coordinator.import_state["status"]
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return progress and the last result."""
+        state = self.coordinator.import_state
+        last_import = state.get("last_import")
+        result = state.get("last_result") or {}
+        return {
+            "progress": state["progress"],
+            "days_requested": state.get("days_requested"),
+            "last_import": last_import.isoformat() if last_import else None,
+            "error": state.get("error"),
+            **{f"last_{key}": value for key, value in result.items()},
+        }
 
 
 class ContactEnergyNextBillDateSensor(ContactEnergySensor):

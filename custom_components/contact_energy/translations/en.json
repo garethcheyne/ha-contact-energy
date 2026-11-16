@@ -9,14 +9,16 @@
           "password": "Password",
           "usage_days": "Usage window (days)",
           "peak_rate": "Peak rate override",
-          "offpeak_rate": "Off-peak rate override"
+          "offpeak_rate": "Off-peak rate override",
+          "history_days": "History to import (days)"
         },
         "data_description": {
           "email": "The email address you use to sign in to Contact Energy.",
           "password": "Your Contact Energy password.",
           "usage_days": "How many recent days to fetch on each update (1-30).",
           "peak_rate": "NZD per kWh. Leave empty to use the rate from your bill.",
-          "offpeak_rate": "NZD per kWh. Leave empty to use the rate from your bill."
+          "offpeak_rate": "NZD per kWh. Leave empty to use the rate from your bill.",
+          "history_days": "Past usage to load into the Energy Dashboard straight after setup, in the background. Use 0 to skip; you can import more later with Configure."
         }
       },
       "reauth_confirm": {
@@ -40,7 +42,14 @@
   "options": {
     "step": {
       "init": {
-        "title": "Contact Energy options",
+        "title": "Contact Energy",
+        "menu_options": {
+          "settings": "Settings",
+          "import_history": "Import history"
+        }
+      },
+      "settings": {
+        "title": "Contact Energy settings",
         "data": {
           "usage_days": "Usage window (days)",
           "peak_rate": "Peak rate override",
@@ -51,7 +60,27 @@
           "peak_rate": "NZD per kWh. Leave empty to use the rate from your bill.",
           "offpeak_rate": "NZD per kWh. Leave empty to use the rate from your bill."
         }
+      },
+      "import_history": {
+        "title": "Import history",
+        "description": "Loads past hourly usage and costs into the Energy Dashboard. History stored now: {stored}.\n\nContact sends one day at a time (about 15 minutes per year of history). The import works newest first and stops early when Contact has no older data. It keeps running if you close this dialog; the **History Import** sensor shows its progress.",
+        "data": {
+          "history_days": "Days to import",
+          "clear_existing": "Clear existing data first"
+        },
+        "data_description": {
+          "history_days": "Up to {max_days} days.",
+          "clear_existing": "Deletes all Contact Energy statistics before importing. Use this to repair a broken Energy Dashboard history."
+        }
       }
+    },
+    "progress": {
+      "importing": "Importing up to {days} days of history from Contact Energy. You can close this dialog; the import carries on in the background."
+    },
+    "abort": {
+      "import_complete": "Imported {days} days ({hours} hours) from {oldest} to {newest}: {kwh} kWh, ${cost}.{limit}",
+      "import_failed": "The history import failed: {error}",
+      "import_running": "A history import is already running. The History Import sensor shows its progress."
     }
   },
   "services": {
@@ -65,7 +94,7 @@
         },
         "days": {
           "name": "Days",
-          "description": "How many days back to import (1-365)."
+          "description": "How many days back to import (1-1095). The import stops early when Contact has no older data."
         },
         "clear_existing": {
           "name": "Clear existing data",
@@ -87,7 +116,7 @@
         },
         "days": {
           "name": "Days",
-          "description": "How many days back to export (1-365)."
+          "description": "How many days back to export (1-1095)."
         }
       }
     }
@@ -96,6 +125,17 @@
     "rolling_sensor_in_energy": {
       "title": "Energy Dashboard is using a Contact Energy rolling-total sensor",
       "description": "Your Energy Dashboard uses {entities}. These sensors show a total for the last few days, so the dashboard gets spikes, negative bars and wrong totals. Contact's data is also 1-2 days behind; the statistics record each hour at the time it was used, while a sensor is recorded when Home Assistant fetches it.\n\nTo fix it, go to **Settings > Dashboards > Energy** and replace them:\n\n- For consumption, use the **Contact Energy** and **Contact Energy Free** statistics.\n- For cost, choose **Use an entity tracking the total costs** and pick **Contact Energy Cost** and **Contact Energy Free Cost**.\n\nThen run the **Import historical data** action once with **Clear existing data** on to rebuild your history. This warning clears the next time Contact Energy reloads."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "history_import": {
+        "state": {
+          "idle": "Idle",
+          "running": "Running",
+          "failed": "Failed"
+        }
+      }
     }
   }
 }

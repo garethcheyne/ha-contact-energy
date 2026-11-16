@@ -14,6 +14,15 @@ class FakeCoordinator:
     def __init__(self, data, entry_id="abc123"):
         self.data = data
         self.config_entry = FakeEntry(entry_id)
+        self.history_range = None
+        self.import_state = {
+            "status": "idle",
+            "progress": 0,
+            "days_requested": None,
+            "last_import": None,
+            "last_result": None,
+            "error": None,
+        }
 
 
 @pytest.fixture
@@ -43,6 +52,9 @@ ALL_SENSORS = [
     ("ContactEnergyCurrentPriceSensor", "abc123_current_price"),
     ("ContactEnergyPeakCostSensor", "abc123_peak_cost"),
     ("ContactEnergyOffPeakCostSensor", "abc123_offpeak_cost"),
+    ("ContactEnergyTotalCostSensor", "abc123_total_cost"),
+    ("ContactEnergyHistoryStoredSensor", "abc123_history_stored"),
+    ("ContactEnergyHistoryImportSensor", "abc123_history_import"),
     ("ContactEnergyPeakRateSensor", "abc123_peak_rate"),
     ("ContactEnergyOffPeakRateSensor", "abc123_offpeak_rate"),
     ("ContactEnergyOffPeakPeriodSensor", "abc123_offpeak_period"),
@@ -100,40 +112,76 @@ class TestValues:
         assert sensor_module.ContactEnergyOffPeakCostSensor(coordinator).native_value == pytest.approx(0.8)
         assert sensor_module.ContactEnergyOffPeakPeriodSensor(coordinator).native_value == "22:00 - 23:00"
 
-    def test_costs_use_what_contact_charged(self, sensor_module, data_module, make_data):
-        """Contact's per-hour charges win over the flat-rate estimate."""
+    def test_usage_costs_are_kwh_times_rate(self, sensor_module, data_module, make_data):
+        """Contact's hourly figures include a daily-charge share; usage cost must not."""
         points = [
             _point(data_module, 8, 2.0, cost=0.70, day=1),
-            _point(data_module, 22, 5.0, offpeak=True, cost=0.75, day=3),
+            _point(data_module, 22, 5.0, offpeak=True, cost=0.95, day=3),
         ]
         coordinator = FakeCoordinator(make_data(points, peak=0.32, offpeak=0.16))
 
         peak = sensor_module.ContactEnergyPeakCostSensor(coordinator)
         offpeak = sensor_module.ContactEnergyOffPeakCostSensor(coordinator)
 
-        assert peak.native_value == 0.70
-        assert offpeak.native_value == 0.75
+        assert peak.native_value == pytest.approx(0.64)
+        assert offpeak.native_value == pytest.approx(0.80)
         assert peak.extra_state_attributes == {
             "period_start": "2026-09-01",
             "period_end": "2026-09-03",
             "days": 3,
             "kwh": 2.0,
             "rate": "$0.3200/kWh",
-            "cost_source": "contact",
-            "estimated_cost": 0.64,
             "peak_energy": "2.00 kWh",
         }
-        assert offpeak.extra_state_attributes["cost_source"] == "contact"
-        assert offpeak.extra_state_attributes["estimated_cost"] == 0.8
 
-    def test_costs_fall_back_to_estimate_without_contact_costs(
-        self, sensor_module, data_module, make_data
-    ):
+    def test_total_cost_is_what_contact_charged(self, sensor_module, data_module, make_data):
+        points = [
+            _point(data_module, 8, 2.0, cost=0.76, day=1),  # 0.64 usage + 0.12 daily share
+            _point(data_module, 22, 5.0, offpeak=True, cost=0.92, day=1),  # 0.80 + 0.12
+        ]
+        data = make_data(points, peak=0.32, offpeak=0.16, bill={"daily_charge": 2.885})
+        sensor = sensor_module.ContactEnergyTotalCostSensor(FakeCoordinator(data))
+
+        assert sensor.native_value == pytest.approx(1.68)
+        attributes = sensor.extra_state_attributes
+        assert attributes["usage_cost"] == pytest.approx(1.44)
+        assert attributes["daily_charges"] == pytest.approx(0.24)
+        assert attributes["cost_source"] == "contact"
+        assert attributes["daily_charge_rate"] == "$2.885/day"
+
+    def test_total_cost_without_contact_costs(self, sensor_module, data_module, make_data):
         points = [_point(data_module, 8, 2.0), _point(data_module, 22, 5.0, offpeak=True)]
-        coordinator = FakeCoordinator(make_data(points, peak=0.32, offpeak=0.16))
-        sensor = sensor_module.ContactEnergyPeakCostSensor(coordinator)
-        assert sensor.native_value == pytest.approx(0.64)
-        assert sensor.extra_state_attributes["cost_source"] == "estimated"
+        sensor = sensor_module.ContactEnergyTotalCostSensor(
+            FakeCoordinator(make_data(points, peak=0.32, offpeak=0.16))
+        )
+        assert sensor.native_value == pytest.approx(1.44)
+        assert sensor.extra_state_attributes["cost_source"] == "usage only"
+        assert "daily_charges" not in sensor.extra_state_attributes
+
+    def test_history_sensors(self, sensor_module, make_data):
+        from datetime import date
+
+        coordinator = FakeCoordinator(make_data())
+        stored = sensor_module.ContactEnergyHistoryStoredSensor(coordinator)
+        status = sensor_module.ContactEnergyHistoryImportSensor(coordinator)
+        assert stored.native_value is None
+        assert status.native_value == "idle"
+
+        coordinator.history_range = (date(2025, 9, 17), date(2026, 11, 14))
+        coordinator.import_state.update(
+            status="running", progress=45, days_requested=500,
+        )
+        assert stored.native_value == 424
+        assert stored.extra_state_attributes == {"oldest": "2025-09-17", "newest": "2026-11-14"}
+        assert status.native_value == "running"
+        assert status.extra_state_attributes["progress"] == 45
+        assert status._attr_entity_category == "diagnostic"
+
+        coordinator.import_state.update(
+            status="idle", progress=100, last_result={"days_imported": 424, "contact_history_starts": "2025-09-17"}
+        )
+        assert status.extra_state_attributes["last_days_imported"] == 424
+        assert status.extra_state_attributes["last_contact_history_starts"] == "2025-09-17"
 
     def test_rate_sensors(self, sensor_module, make_data):
         coordinator = FakeCoordinator(make_data(peak=0.327, offpeak=0.161))

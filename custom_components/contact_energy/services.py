@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import logging
 from pathlib import Path
 
 import voluptuous as vol
 
-from homeassistant.components.recorder import get_instance
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .api import ContactEnergyAuthError, ContactEnergyConnectionError
-from .const import ALL_STATISTIC_IDS, CONF_CONFIG_ENTRY_ID, DOMAIN
-from .coordinator import ContactEnergyCoordinator, async_write_statistics
+from .const import CONF_CONFIG_ENTRY_ID, DOMAIN, MAX_HISTORY_DAYS
+from .coordinator import ContactEnergyCoordinator, HistoryImportRunning
 from .data import UsagePoint
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,7 +30,9 @@ CSV_FIELDS = ["timestamp", "date", "hour", "kwh", "cost_nzd", "is_offpeak", "off
 IMPORT_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_CONFIG_ENTRY_ID): cv.string,
-        vol.Optional("days", default=90): vol.All(vol.Coerce(int), vol.Range(min=1, max=365)),
+        vol.Optional("days", default=90): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=MAX_HISTORY_DAYS)
+        ),
         vol.Optional("clear_existing", default=False): cv.boolean,
         vol.Optional("confirm_clear", default=""): cv.string,
     }
@@ -39,7 +41,9 @@ IMPORT_SCHEMA = vol.Schema(
 EXPORT_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_CONFIG_ENTRY_ID): cv.string,
-        vol.Optional("days", default=30): vol.All(vol.Coerce(int), vol.Range(min=1, max=365)),
+        vol.Optional("days", default=30): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=MAX_HISTORY_DAYS)
+        ),
     }
 )
 
@@ -109,23 +113,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
                 "clear_existing deletes all Contact Energy statistics; type 'yes' in confirm_clear to go ahead"
             )
         coordinator = _get_coordinator(hass, call)
-        points = await _async_fetch(coordinator, call.data["days"])
-
-        async with coordinator.statistics_lock:
-            if clear_existing:
-                _LOGGER.info("Clearing existing Contact Energy statistics")
-                # Queued on the recorder ahead of the import below, so the
-                # import always lands after the clear.
-                get_instance(hass).async_clear_statistics(list(ALL_STATISTIC_IDS))
-            await async_write_statistics(hass, points, reset=clear_existing)
-
-        _LOGGER.info("Imported %d hourly statistics into the Energy Dashboard", len(points))
-        return {
-            "hours_imported": len(points),
-            "cleared_existing": clear_existing,
-            "kwh": round(sum(p.kwh for p in points), 3),
-            "cost_nzd": round(sum(p.cost for p in points), 2),
-        }
+        try:
+            task = coordinator.async_start_history_import(call.data["days"], clear_existing)
+        except HistoryImportRunning as err:
+            raise ServiceValidationError("A Contact Energy history import is already running") from err
+        # The import runs as its own background task; this only waits for it.
+        return await asyncio.shield(task)
 
     async def handle_export(call: ServiceCall) -> ServiceResponse:
         coordinator = _get_coordinator(hass, call)
