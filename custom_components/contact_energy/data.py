@@ -41,11 +41,23 @@ class UsageSummary:
     latest_day_kwh: float
     latest_day_cost: float
     offpeak_window: tuple[int, int] | None  # (start hour, end hour), NZ time
+    period_start: date | None = None  # first day with data
+    period_end: date | None = None  # last day with data
+    peak_cost: float = 0.0  # what Contact charged for peak hours
+    offpeak_cost: float = 0.0  # what Contact charged for off-peak hours
+    has_cost: bool = False  # False when Contact reported no costs at all
 
     @property
     def total_kwh(self) -> float:
         """Total usage in the window."""
         return self.peak_kwh + self.offpeak_kwh
+
+    @property
+    def days(self) -> int:
+        """Number of days the period covers."""
+        if self.period_start is None or self.period_end is None:
+            return 0
+        return (self.period_end - self.period_start).days + 1
 
 
 @dataclass(frozen=True)
@@ -164,6 +176,11 @@ def summarise(points: Iterable[UsagePoint]) -> UsageSummary | None:
         latest_day_kwh=sum(p.kwh for p in latest_points),
         latest_day_cost=sum(p.cost for p in latest_points),
         offpeak_window=window,
+        period_start=min(by_day),
+        period_end=max(by_day),
+        peak_cost=sum(p.cost for p in ordered if not p.offpeak),
+        offpeak_cost=sum(p.cost for p in ordered if p.offpeak),
+        has_cost=any(p.cost > 0 for p in ordered),
     )
 
 

@@ -121,6 +121,14 @@ class TestSummarise:
         assert summary.latest_day_kwh == pytest.approx(3.5)
         assert summary.latest_day_cost == pytest.approx(0.95)
         assert summary.offpeak_window == (22, 23)
+        assert (summary.period_start, summary.period_end, summary.days) == (d1, d2, 2)
+        assert summary.peak_cost == pytest.approx(1.5)
+        assert summary.offpeak_cost == pytest.approx(0.15)
+        assert summary.has_cost is True
+
+    def test_has_cost_false_when_contact_reports_no_costs(self):
+        summary = summarise([_point(date(2026, 9, 1), 8, 2.0, cost=0.0)])
+        assert summary.has_cost is False
 
     def test_latest_day_skips_trailing_all_zero_day(self):
         d1, d2 = date(2026, 9, 1), date(2026, 9, 2)

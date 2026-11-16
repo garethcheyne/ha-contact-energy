@@ -32,9 +32,9 @@ def make_data(data_module):
     return _make
 
 
-def _point(data_module, hour, kwh, offpeak=False):
+def _point(data_module, hour, kwh, offpeak=False, cost=0.0, day=1):
     return data_module.UsagePoint(
-        start=datetime(2026, 9, 1, hour, tzinfo=data_module.NZ_TZ), kwh=kwh, cost=0.0, offpeak=offpeak
+        start=datetime(2026, 9, day, hour, tzinfo=data_module.NZ_TZ), kwh=kwh, cost=cost, offpeak=offpeak
     )
 
 
@@ -43,6 +43,8 @@ ALL_SENSORS = [
     ("ContactEnergyCurrentPriceSensor", "abc123_current_price"),
     ("ContactEnergyPeakCostSensor", "abc123_peak_cost"),
     ("ContactEnergyOffPeakCostSensor", "abc123_offpeak_cost"),
+    ("ContactEnergyPeakRateSensor", "abc123_peak_rate"),
+    ("ContactEnergyOffPeakRateSensor", "abc123_offpeak_rate"),
     ("ContactEnergyOffPeakPeriodSensor", "abc123_offpeak_period"),
     ("ContactEnergyNextBillDateSensor", "contact_energy_abc123_next_bill_date"),
     ("ContactEnergyNextBillAmountSensor", "contact_energy_abc123_next_bill_amount"),
@@ -97,6 +99,60 @@ class TestValues:
         assert sensor_module.ContactEnergyPeakCostSensor(coordinator).native_value == pytest.approx(0.64)
         assert sensor_module.ContactEnergyOffPeakCostSensor(coordinator).native_value == pytest.approx(0.8)
         assert sensor_module.ContactEnergyOffPeakPeriodSensor(coordinator).native_value == "22:00 - 23:00"
+
+    def test_costs_use_what_contact_charged(self, sensor_module, data_module, make_data):
+        """Contact's per-hour charges win over the flat-rate estimate."""
+        points = [
+            _point(data_module, 8, 2.0, cost=0.70, day=1),
+            _point(data_module, 22, 5.0, offpeak=True, cost=0.75, day=3),
+        ]
+        coordinator = FakeCoordinator(make_data(points, peak=0.32, offpeak=0.16))
+
+        peak = sensor_module.ContactEnergyPeakCostSensor(coordinator)
+        offpeak = sensor_module.ContactEnergyOffPeakCostSensor(coordinator)
+
+        assert peak.native_value == 0.70
+        assert offpeak.native_value == 0.75
+        assert peak.extra_state_attributes == {
+            "period_start": "2026-09-01",
+            "period_end": "2026-09-03",
+            "days": 3,
+            "kwh": 2.0,
+            "rate": "$0.3200/kWh",
+            "cost_source": "contact",
+            "estimated_cost": 0.64,
+            "peak_energy": "2.00 kWh",
+        }
+        assert offpeak.extra_state_attributes["cost_source"] == "contact"
+        assert offpeak.extra_state_attributes["estimated_cost"] == 0.8
+
+    def test_costs_fall_back_to_estimate_without_contact_costs(
+        self, sensor_module, data_module, make_data
+    ):
+        points = [_point(data_module, 8, 2.0), _point(data_module, 22, 5.0, offpeak=True)]
+        coordinator = FakeCoordinator(make_data(points, peak=0.32, offpeak=0.16))
+        sensor = sensor_module.ContactEnergyPeakCostSensor(coordinator)
+        assert sensor.native_value == pytest.approx(0.64)
+        assert sensor.extra_state_attributes["cost_source"] == "estimated"
+
+    def test_rate_sensors(self, sensor_module, make_data):
+        coordinator = FakeCoordinator(make_data(peak=0.327, offpeak=0.161))
+        peak = sensor_module.ContactEnergyPeakRateSensor(coordinator)
+        offpeak = sensor_module.ContactEnergyOffPeakRateSensor(coordinator)
+        assert (peak.native_value, offpeak.native_value) == (0.327, 0.161)
+        assert peak._attr_native_unit_of_measurement == "NZD/kWh"
+        assert peak._attr_state_class == "measurement"
+        assert peak.extra_state_attributes == {"rate_source": "bill"}
+
+    def test_usage_sensor_shows_period(self, sensor_module, data_module, make_data):
+        points = [_point(data_module, 8, 2.0, day=1), _point(data_module, 8, 1.0, day=2)]
+        sensor = sensor_module.ContactEnergyUsageSensor(FakeCoordinator(make_data(points)))
+        attributes = sensor.extra_state_attributes
+        assert (attributes["period_start"], attributes["period_end"], attributes["days"]) == (
+            "2026-09-01",
+            "2026-09-02",
+            2,
+        )
 
     def test_values_are_unknown_before_any_usage(self, sensor_module, make_data):
         coordinator = FakeCoordinator(make_data())
