@@ -109,7 +109,7 @@ Requires Home Assistant 2025.11 or newer.
 
 ---
 
-## Original v2026.01.18 (Initial Fork)
+## v2026.01.18
 
 - Added UI-based configuration (Config Flow) with credential validation before saving.
 - Sensor reports actual state values with cost tracking in attributes.
